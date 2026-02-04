@@ -1276,7 +1276,7 @@ if __name__ == "__main__":
             factor_df=factor_df,
             price_df=price_df,
             rebalance_period=5,
-            n_groups=3,
+            n_groups=5,
             weight_method="equal",
             need_plot=True,
             need_preprocess=True,
