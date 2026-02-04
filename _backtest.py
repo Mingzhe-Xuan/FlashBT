@@ -1131,7 +1131,7 @@ class BackTest:
         Save as vis_summary.png.
         """
         fig = plt.figure(figsize=(18, 12))
-        gs = fig.add_gridspec(3, 1, height_ratios=[0.8, 2.5, 1], hspace=0.35)
+        gs = fig.add_gridspec(3, 1, height_ratios=[0.8, 2.5, 1], hspace=0.4)
 
         ax_top = fig.add_subplot(gs[0])
         ax_mid = fig.add_subplot(gs[1])
