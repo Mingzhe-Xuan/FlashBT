@@ -21,6 +21,7 @@ class BackTest:
         metrics_path: str = None,
         figures_path: str = None,
         cumprod: bool = True,
+        auto_run: bool = False,
     ):
         r"""
         Back-test engine for factor-based strategies.
@@ -53,6 +54,8 @@ class BackTest:
             Path to save figures. Default is None.
         cumprod : bool
             Whether to compute cumulative product of daily returns. Default is True.
+        auto_run : bool
+            Whether automatically run the backtest as soon as the instance is created. Default is False.
 
         Attributes
         ----------
@@ -104,6 +107,7 @@ class BackTest:
         self.metrics_path = metrics_path
         self.figures_path = figures_path
         self.cumprod = cumprod
+        self.auto_run = auto_run
 
         assert isinstance(
             self.factor_df, pd.DataFrame
@@ -131,23 +135,19 @@ class BackTest:
         if weight_method not in supported_methods:
             raise ValueError(f"Invalid weight_method '{weight_method}'. Supported methods: {supported_methods}")
 
-        self.factor_names = factor_df.columns.tolist()
-        for factor in self.factor_names:
-            factor_series = factor_df[factor].dropna()
-            if len(factor_series) == 0:
-                Warning(f"Factor {factor} has no valid data after removing nans.")
-                self.factor_names.remove(factor)
-                self.factor_df = self.factor_df.drop(columns=[factor])
-
         if need_preprocess:
             self.preprocess(self.price_df, self.factor_df)
         else:
             self.time_index = self.factor_df.index.intersection(self.price_df.index)
             self.price_df = self.price_df.loc[self.time_index]
             self.factor_df = self.factor_df.loc[self.time_index]
+
+        # self.stocks = factor_df.columns.tolist()
+        # assert self.stocks == price_df.columns.to_list(), "factor_df must have the same columns as price_df."
         
         # Automatically run the backtest after initialization
-        self.run()
+        if self.auto_run:
+            self.run()
 
     def preprocess(
         self,
@@ -322,36 +322,47 @@ class BackTest:
             win_rate = (avg_daily_returns > 0).mean()
 
         # Calculate Rank IC for each time point for visualization
+        # Use factors at time t to predict returns at time t+1 to avoid forward-looking bias
         rank_ic_series = []
         rank_ic_dates = []
 
-        for date in factor_df.index:
+        # Get the list of dates in order
+        factor_dates = factor_df.index
+        for i, date in enumerate(factor_dates[:-1]):  # Exclude the last date since there's no future return
             if date in daily_ret_df.index:
-                # Get factors and returns for this date
+                # Get factors at current date (time t)
                 factors_at_date = factor_df.loc[date].dropna()
-                returns_at_date = daily_ret_df.loc[date].dropna()
+                
+                # Get returns at the next date (time t+1) - this avoids forward-looking bias
+                next_date_idx = i + 1
+                if next_date_idx < len(factor_dates) and factor_dates[next_date_idx] in daily_ret_df.index:
+                    returns_at_next_date = daily_ret_df.loc[factor_dates[next_date_idx]].dropna()
 
-                # Find common assets
-                common_assets = factors_at_date.index.intersection(
-                    returns_at_date.index
-                )
-                if len(common_assets) > 1:  # Need at least 2 points for correlation
-                    aligned_factors = factors_at_date[common_assets]
-                    aligned_returns = returns_at_date[common_assets]
-
-                    # Calculate Rank IC for this date
-                    rank_ic_val = aligned_factors.rank().corr(
-                        aligned_returns, method="spearman"
+                    # Find common assets
+                    common_assets = factors_at_date.index.intersection(
+                        returns_at_next_date.index
                     )
+                    if len(common_assets) > 1:  # Need at least 2 points for correlation
+                        aligned_factors = factors_at_date[common_assets]
+                        aligned_returns = returns_at_next_date[common_assets]
 
-                    if not pd.isna(rank_ic_val):
-                        rank_ic_series.append(rank_ic_val)
-                        rank_ic_dates.append(date)
+                        # Calculate Rank IC for this date using current factors to predict next returns
+                        rank_ic_val = aligned_factors.rank().corr(
+                            aligned_returns, method="spearman"
+                        )
+
+                        if not pd.isna(rank_ic_val):
+                            rank_ic_series.append(rank_ic_val)
+                            rank_ic_dates.append(date)
 
         # Also calculate overall Rank IC across all time periods and assets
-        # Flatten the data to calculate correlation across all observations
+        # Use factors at time t to predict returns at time t+1 to avoid forward-looking bias
+        # Shift returns forward by one period to align factors with future returns
         factor_values = factor_df.stack()
-        return_values = daily_ret_df.reindex(factor_df.index).stack()
+        shifted_return_df = daily_ret_df.shift(-1)  # Shift returns back by 1 so factor t predicts return t+1
+        return_values = shifted_return_df.reindex(factor_df.index).stack()
+        
+        # Only keep pairs where both factor and return exist
         common_idx = factor_values.index.intersection(return_values.index)
         if len(common_idx) > 1:  # Need at least 2 points for correlation
             aligned_factors = factor_values[common_idx]
@@ -1033,6 +1044,7 @@ if __name__ == "__main__":
                     need_plot=True,
                     need_preprocess=True
                 )
+                bt.run()
                 print("Backtest completed successfully!")
                 print(f"Sharpe Ratio: {bt.sharpe_ratio}")
             except Exception as e:
