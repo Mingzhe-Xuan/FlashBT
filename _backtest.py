@@ -29,9 +29,9 @@ class BackTest:
         Parameters
         ----------
         factor_df : pd.DataFrame
-            Factor values for each asset at each time point.
+            Factor values for each asset at each time point. Note that the dataframe must have the same columns as price_df and has datetime as index.
         price_df : pd.DataFrame
-            Close prices for each asset at each time point.
+            Close prices for each asset at each time point. Note that the dataframe must have the same columns as factor_df and has datetime as index.
         rebalance_period : int
             Rebalancing frequency (number of periods between portfolio shifts). Day as the unit.
         n_groups : int
@@ -119,9 +119,13 @@ class BackTest:
         # Validate weight_method with only supported options
         # Allow for extensibility - only validate currently supported methods
         # Future weight methods can be added here as they are implemented
-        supported_methods = ["equal"]  # Add new methods to this list as they are implemented
+        supported_methods = [
+            "equal"
+        ]  # Add new methods to this list as they are implemented
         if weight_method not in supported_methods:
-            raise ValueError(f"Invalid weight_method '{weight_method}'. Supported methods: {supported_methods}")
+            raise ValueError(
+                f"Invalid weight_method '{weight_method}'. Supported methods: {supported_methods}"
+            )
 
         # Verify that we have at least one stock price column
         assert (
@@ -131,9 +135,13 @@ class BackTest:
         # Restrict weight_method to only "equal" since market_cap functionality has been removed
         # Allow for extensibility - only validate currently supported methods
         # Future weight methods can be added here as they are implemented
-        supported_methods = ["equal"]  # Add new methods to this list as they are implemented
+        supported_methods = [
+            "equal"
+        ]  # Add new methods to this list as they are implemented
         if weight_method not in supported_methods:
-            raise ValueError(f"Invalid weight_method '{weight_method}'. Supported methods: {supported_methods}")
+            raise ValueError(
+                f"Invalid weight_method '{weight_method}'. Supported methods: {supported_methods}"
+            )
 
         if need_preprocess:
             self.preprocess(self.price_df, self.factor_df)
@@ -141,11 +149,13 @@ class BackTest:
             self.time_index = self.factor_df.index.intersection(self.price_df.index)
             self.price_df = self.price_df.loc[self.time_index]
             self.factor_df = self.factor_df.loc[self.time_index]
-        
+
         # Set stocks after preprocessing to ensure both dataframes have the same columns
         self.stocks = self.factor_df.columns.tolist()
-        assert self.stocks == self.price_df.columns.to_list(), "factor_df must have the same columns as price_df."
-        
+        assert (
+            self.stocks == self.price_df.columns.to_list()
+        ), "factor_df must have the same columns as price_df."
+
         # Automatically run the backtest after initialization
         if self.auto_run:
             self.run()
@@ -270,9 +280,7 @@ class BackTest:
             # Default to equal weighting for any unrecognized method
             avg_daily_returns = daily_ret_df.mean(axis=1)
             avg_cum_ret = (
-                cum_ret_df.mean(axis=1)
-                if cumprod
-                else cum_ret_df.mean(axis=1)
+                cum_ret_df.mean(axis=1) if cumprod else cum_ret_df.mean(axis=1)
             )
 
         # Calculate Sharpe ratio with protection against division by zero
@@ -329,15 +337,22 @@ class BackTest:
 
         # Get the list of dates in order
         factor_dates = factor_df.index
-        for i, date in enumerate(factor_dates[:-1]):  # Exclude the last date since there's no future return
+        for i, date in enumerate(
+            factor_dates[:-1]
+        ):  # Exclude the last date since there's no future return
             if date in daily_ret_df.index:
                 # Get factors at current date (time t)
                 factors_at_date = factor_df.loc[date].dropna()
-                
+
                 # Get returns at the next date (time t+1) - this avoids forward-looking bias
                 next_date_idx = i + 1
-                if next_date_idx < len(factor_dates) and factor_dates[next_date_idx] in daily_ret_df.index:
-                    returns_at_next_date = daily_ret_df.loc[factor_dates[next_date_idx]].dropna()
+                if (
+                    next_date_idx < len(factor_dates)
+                    and factor_dates[next_date_idx] in daily_ret_df.index
+                ):
+                    returns_at_next_date = daily_ret_df.loc[
+                        factor_dates[next_date_idx]
+                    ].dropna()
 
                     # Find common assets
                     common_assets = factors_at_date.index.intersection(
@@ -360,9 +375,11 @@ class BackTest:
         # Use factors at time t to predict returns at time t+1 to avoid forward-looking bias
         # Shift returns forward by one period to align factors with future returns
         factor_values = factor_df.stack()
-        shifted_return_df = daily_ret_df.shift(-1)  # Shift returns back by 1 so factor t predicts return t+1
+        shifted_return_df = daily_ret_df.shift(
+            -1
+        )  # Shift returns back by 1 so factor t predicts return t+1
         return_values = shifted_return_df.reindex(factor_df.index).stack()
-        
+
         # Only keep pairs where both factor and return exist
         common_idx = factor_values.index.intersection(return_values.index)
         if len(common_idx) > 1:  # Need at least 2 points for correlation
@@ -483,7 +500,7 @@ class BackTest:
                                 avg_group_ret_by_period.loc[date, group_num] = np.nan
                         else:
                             avg_group_ret_by_period.loc[date, group_num] = np.nan
-                    
+
                     # Handle groups that don't exist due to duplicate values or insufficient data
                     # Fill missing groups with NaN for consistency
                     for group_num in range(self.n_groups):
@@ -531,7 +548,9 @@ class BackTest:
                                 available_assets = daily_ret_df.columns.intersection(
                                     group_assets
                                 )
-                                group_returns = []  # Initialize here to ensure it exists in all code paths
+                                group_returns = (
+                                    []
+                                )  # Initialize here to ensure it exists in all code paths
                                 if len(available_assets) > 0:
                                     for day_idx in range(date_idx + 1, end_idx):
                                         if day_idx < len(daily_ret_df.index):
@@ -558,9 +577,7 @@ class BackTest:
                                                             day_rets.mean()
                                                         )
 
-                                                    if not pd.isna(
-                                                        weighted_return
-                                                    ):
+                                                    if not pd.isna(weighted_return):
                                                         group_returns.append(
                                                             weighted_return
                                                         )
@@ -574,9 +591,7 @@ class BackTest:
                                                             ] = {}
                                                         all_group_daily_returns[
                                                             group_num
-                                                        ][
-                                                            day_date
-                                                        ] = weighted_return
+                                                        ][day_date] = weighted_return
 
                                 if group_returns:
                                     avg_group_ret_by_period.loc[date, group_num] = (
@@ -794,7 +809,7 @@ class BackTest:
     def plot_ic(self, plot_type="time_series"):
         r"""
         Plot information-coefficient time series (Rank IC and Cumulative Rank IC) or histogram.
-        
+
         Parameters
         ----------
         plot_type : str
@@ -850,13 +865,13 @@ class BackTest:
         elif plot_type == "histogram":
             # Plot histogram of Rank IC values
             fig, ax = plt.subplots(figsize=(12, 8))
-            
+
             rank_ic_available = (
                 hasattr(self, "rank_ic_time_series")
                 and self.rank_ic_time_series is not None
                 and len(self.rank_ic_time_series) > 0
             )
-            
+
             if rank_ic_available:
                 ax.hist(
                     self.rank_ic_time_series.values,
@@ -865,17 +880,29 @@ class BackTest:
                     color="blue",
                     edgecolor="black",
                 )
-                
+
                 ax.set_title("Histogram of Rank IC Values")
                 ax.set_xlabel("Rank IC (Spearman)")
                 ax.set_ylabel("Frequency")
                 ax.grid(True, axis="y")
-                
+
                 # Add mean and median lines
                 mean_ic = self.rank_ic_time_series.mean()
                 median_ic = self.rank_ic_time_series.median()
-                ax.axvline(mean_ic, color="red", linestyle="--", linewidth=2, label=f"Mean: {mean_ic:.4f}")
-                ax.axvline(median_ic, color="green", linestyle="--", linewidth=2, label=f"Median: {median_ic:.4f}")
+                ax.axvline(
+                    mean_ic,
+                    color="red",
+                    linestyle="--",
+                    linewidth=2,
+                    label=f"Mean: {mean_ic:.4f}",
+                )
+                ax.axvline(
+                    median_ic,
+                    color="green",
+                    linestyle="--",
+                    linewidth=2,
+                    label=f"Median: {median_ic:.4f}",
+                )
                 ax.legend()
             else:
                 print("No Rank IC time series data available for histogram.")
@@ -1006,56 +1033,28 @@ class BackTest:
             plt.savefig(os.path.join(self.figures_path, "avg_group_returns.png"))
             plt.close()
 
+
 if __name__ == "__main__":
     # Example usage of the backtest framework
     # Load example data
     import os
+
     if os.path.exists("example_price.csv") and os.path.exists("example_factors.csv"):
-        price_df = pd.read_csv("example_price.csv", index_col='time')
-        factor_df = pd.read_csv("example_factors.csv", index_col='Date')
-        
+        price_df = pd.read_csv("example_price.csv", index_col="time")
+        factor_df = pd.read_csv("example_factors.csv", index_col="Date")
+
         # Convert index to datetime
         price_df.index = pd.to_datetime(price_df.index)
         factor_df.index = pd.to_datetime(factor_df.index)
-        
-        # Use only numeric columns for both dataframes
-        price_df = price_df.select_dtypes(include=[np.number])
-        factor_df = factor_df.select_dtypes(include=[np.number])
-        
-        # Ensure we have sufficient overlapping dates
-        common_dates = price_df.index.intersection(factor_df.index)
-        if len(common_dates) > 10:  # Need at least 10 days for meaningful backtest
-            price_df = price_df.loc[common_dates]
-            factor_df = factor_df.loc[common_dates]
-            
-            # Ensure both dataframes have the same columns (stocks/assets)
-            common_columns = price_df.columns.intersection(factor_df.columns)
-            price_df = price_df[common_columns]
-            factor_df = factor_df[common_columns]
 
-            # Limit to a reasonable number of columns to prevent issues
-            cols_to_use = min(5, len(common_columns))
-            price_df = price_df.iloc[:, :cols_to_use]
-            factor_df = factor_df.iloc[:, :cols_to_use]
-            
-            try:
-                bt = BackTest(
-                    factor_df=factor_df,
-                    price_df=price_df,
-                    rebalance_period=5,
-                    n_groups=3,
-                    weight_method='equal',
-                    need_plot=True,
-                    need_preprocess=True
-                )
-                bt.run()
-                print("Backtest completed successfully!")
-                print(f"Sharpe Ratio: {bt.sharpe_ratio}")
-            except Exception as e:
-                print(f"Error during backtest: {e}")
-                import traceback
-                traceback.print_exc()
-        else:
-            print("Insufficient overlapping data for backtest")
-    else:
-        print("Example files not found. Please ensure 'example_price.csv' and 'example_factors.csv' exist in the directory.")
+        bt = BackTest(
+            factor_df=factor_df,
+            price_df=price_df,
+            rebalance_period=5,
+            n_groups=3,
+            weight_method="equal",
+            need_plot=True,
+            need_preprocess=True,
+        )
+        bt.run()
+        print("Backtest completed successfully!")
