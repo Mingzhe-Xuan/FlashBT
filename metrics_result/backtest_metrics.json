@@ -1,1 +1,51 @@
-{"sharpe_ratio": 0.2502852468612571, "sortino_ratio": 0.3766016018953602, "calmar_ratio": 0.037214492971758044, "max_drawdown": -0.24358776518000447, "win_rate": 0.45606060606060606, "rank_ic": -0.02018262777921594}
+{
+    "overall": {
+        "sharpe_ratio": 0.2502852468612571,
+        "sortino_ratio": 0.3766016018953602,
+        "calmar_ratio": 0.037214492971758044,
+        "max_drawdown": -0.24358776518000447,
+        "win_rate": 0.45606060606060606,
+        "rank_ic": -0.02018262777921594,
+        "annual_return": 0.027832787323280206,
+        "cumulative_return": 0.07454723178654495
+    },
+    "groups": {
+        "group_0": {
+            "annual_return": 0.05601241227784759,
+            "cumulative_return": 0.12096547916640366,
+            "sharpe_ratio": 0.3965396133285842,
+            "sortino_ratio": 0.5823283398972366,
+            "calmar_ratio": 0.05947200534358188,
+            "max_drawdown": -0.17728083613011147,
+            "win_rate": 0.4696969696969697,
+            "rank_ic": -0.02018262777921594
+        },
+        "group_1": {
+            "annual_return": 0.0944442249899371,
+            "cumulative_return": 0.2081475985905874,
+            "sharpe_ratio": 0.5593212295845221,
+            "sortino_ratio": 0.8153611688647496,
+            "calmar_ratio": 0.07204925590239013,
+            "max_drawdown": -0.15104187756054155,
+            "win_rate": 0.5,
+            "rank_ic": -0.02018262777921594
+        },
+        "group_2": {
+            "annual_return": 0.04491245326797988,
+            "cumulative_return": 0.09641998762491544,
+            "sharpe_ratio": 0.32920844776062896,
+            "sortino_ratio": 0.4900276175937081,
+            "calmar_ratio": 0.055329885039585615,
+            "max_drawdown": -0.18500951088687678,
+            "win_rate": 0.48484848484848486,
+            "rank_ic": -0.02018262777921594
+        }
+    },
+    "metadata": {
+        "rebalance_period": 5,
+        "n_groups": 3,
+        "weight_method": "equal",
+        "cumprod": true,
+        "trading_days": 660
+    }
+}

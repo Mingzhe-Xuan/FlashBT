@@ -683,52 +683,141 @@ class BackTest:
         self.avg_group_daily_ret = metrics_dict["avg_group_daily_ret"]
         self.avg_group_cum_ret = metrics_dict["avg_group_cum_ret"]
 
-        # Save metrics to file
+        # Save comprehensive metrics to file
         import json
 
+        # Calculate additional metrics
+        # Overall portfolio metrics
+        overall_daily_returns = self.daily_ret.mean(axis=1)
+        overall_cumulative_return = self.cum_ret.mean(axis=1)
+        
+        # Annual return calculation
+        if len(overall_daily_returns) > 0:
+            trading_days = len(overall_daily_returns)
+            total_return = overall_cumulative_return.iloc[-1] if len(overall_cumulative_return) > 0 else 0
+            if self.cumprod:
+                annual_return = (1 + total_return) ** (252 / trading_days) - 1 if trading_days > 0 else 0
+            else:
+                annual_return = total_return * (252 / trading_days) if trading_days > 0 else 0
+        else:
+            annual_return = 0
+        
+        # Calculate group-specific metrics
+        group_metrics = {}
+        if (
+            hasattr(self, "avg_group_daily_ret")
+            and self.avg_group_daily_ret is not None
+            and not self.avg_group_daily_ret.empty
+        ):
+            for group_num in self.avg_group_daily_ret.columns:
+                group_daily_rets = self.avg_group_daily_ret[group_num].dropna()
+                
+                if len(group_daily_rets) > 0:
+                    # Group cumulative return
+                    if self.cumprod:
+                        group_cum_ret = (1 + group_daily_rets).cumprod() - 1
+                    else:
+                        group_cum_ret = group_daily_rets.cumsum()
+                    
+                    group_total_return = group_cum_ret.iloc[-1] if len(group_cum_ret) > 0 else 0
+                    
+                    # Group annual return
+                    trading_days = len(group_daily_rets)
+                    if self.cumprod:
+                        group_annual_return = (1 + group_total_return) ** (252 / trading_days) - 1 if trading_days > 0 else 0
+                    else:
+                        group_annual_return = group_total_return * (252 / trading_days) if trading_days > 0 else 0
+                    
+                    # Group Sharpe ratio
+                    group_mean = group_daily_rets.mean()
+                    group_std = group_daily_rets.std()
+                    if group_std == 0 or pd.isna(group_std) or pd.isna(group_mean):
+                        group_sharpe = 0.0
+                    else:
+                        group_sharpe = (group_mean / group_std) * np.sqrt(252)
+                    
+                    # Group Sortino ratio
+                    group_negative_returns = group_daily_rets[group_daily_rets < 0]
+                    if len(group_negative_returns) > 0:
+                        group_negative_std = group_negative_returns.std()
+                        if group_negative_std == 0 or pd.isna(group_negative_std) or pd.isna(group_mean):
+                            group_sortino = 0.0
+                        else:
+                            group_sortino = (group_mean / group_negative_std) * np.sqrt(252)
+                    else:
+                        group_sortino = group_sharpe
+                    
+                    # Group Calmar ratio
+                    group_min = group_daily_rets.min()
+                    if group_min == 0 or pd.isna(group_min) or pd.isna(group_mean):
+                        group_calmar = 0.0
+                    else:
+                        group_calmar = (group_mean / abs(group_min)) * np.sqrt(252)
+                    
+                    # Group max drawdown
+                    if self.cumprod:
+                        group_running_max = (1 + group_cum_ret).cummax()
+                        group_drawdown = (1 + group_cum_ret) / group_running_max - 1
+                    else:
+                        group_running_max = group_cum_ret.expanding().max()
+                        group_drawdown = group_cum_ret - group_running_max
+                    
+                    if group_drawdown.empty or pd.isna(group_drawdown.min()):
+                        group_max_drawdown = 0.0
+                    else:
+                        group_max_drawdown = group_drawdown.min()
+                    
+                    # Group win rate
+                    if group_daily_rets.empty or pd.isna((group_daily_rets > 0).mean()):
+                        group_win_rate = 0.0
+                    else:
+                        group_win_rate = (group_daily_rets > 0).mean()
+                    
+                    # Group Rank IC (use overall rank_ic as approximation)
+                    group_rank_ic = self.rank_ic if hasattr(self, "rank_ic") else 0.0
+                    
+                    group_metrics[f"group_{group_num}"] = {
+                        "annual_return": float(group_annual_return),
+                        "cumulative_return": float(group_total_return),
+                        "sharpe_ratio": float(group_sharpe),
+                        "sortino_ratio": float(group_sortino),
+                        "calmar_ratio": float(group_calmar),
+                        "max_drawdown": float(group_max_drawdown),
+                        "win_rate": float(group_win_rate),
+                        "rank_ic": float(group_rank_ic),
+                    }
+
+        # Prepare comprehensive metrics dictionary
+        comprehensive_metrics = {
+            "overall": {
+                "sharpe_ratio": float(self.sharpe_ratio),
+                "sortino_ratio": float(self.sortino_ratio),
+                "calmar_ratio": float(self.calmar_ratio),
+                "max_drawdown": float(self.max_drawdown),
+                "win_rate": float(self.win_rate),
+                "rank_ic": float(self.rank_ic),
+                "annual_return": float(annual_return),
+                "cumulative_return": float(overall_cumulative_return.iloc[-1]) if len(overall_cumulative_return) > 0 else 0.0,
+            },
+            "groups": group_metrics,
+            "metadata": {
+                "rebalance_period": self.rebalance_period,
+                "n_groups": self.n_groups,
+                "weight_method": self.weight_method,
+                "cumprod": self.cumprod,
+                "trading_days": len(overall_daily_returns),
+            },
+        }
+
         with open(os.path.join(self.metrics_path, "backtest_metrics.json"), "w") as f:
-            # Convert series to scalar values by taking mean or appropriate aggregation
-            json.dump(
-                {
-                    "sharpe_ratio": (
-                        float(self.sharpe_ratio.mean())
-                        if hasattr(self.sharpe_ratio, "mean")
-                        else float(self.sharpe_ratio)
-                    ),
-                    "sortino_ratio": (
-                        float(self.sortino_ratio.mean())
-                        if hasattr(self.sortino_ratio, "mean")
-                        else float(self.sortino_ratio)
-                    ),
-                    "calmar_ratio": (
-                        float(self.calmar_ratio.mean())
-                        if hasattr(self.calmar_ratio, "mean")
-                        else float(self.calmar_ratio)
-                    ),
-                    "max_drawdown": (
-                        float(self.max_drawdown.mean())
-                        if hasattr(self.max_drawdown, "mean")
-                        else float(self.max_drawdown)
-                    ),
-                    "win_rate": (
-                        float(self.win_rate.mean())
-                        if hasattr(self.win_rate, "mean")
-                        else float(self.win_rate)
-                    ),
-                    "rank_ic": (
-                        float(self.rank_ic.mean())
-                        if hasattr(self.rank_ic, "mean")
-                        else float(self.rank_ic)
-                    ),
-                },
-                f,
-            )
+            json.dump(comprehensive_metrics, f, indent=4)
 
         # Plot results if required
         if self.need_plot:
             self.plot_ret()
             self.plot_ic()
             self.plot_avg_group_ret()
+            self.plot_vis_summary()
 
         return metrics_dict
 
@@ -1032,6 +1121,142 @@ class BackTest:
             plt.tight_layout()
             plt.savefig(os.path.join(self.figures_path, "avg_group_returns.png"))
             plt.close()
+
+    def plot_vis_summary(self):
+        r"""
+        Create comprehensive visualization with three distinct sections arranged vertically:
+        - Top: Average returns by group (bar chart)
+        - Middle: Cumulative returns by group and overall portfolio
+        - Bottom: Rank IC (bars) and cumulative Rank IC (line)
+        Save as vis_summary.png.
+        """
+        fig = plt.figure(figsize=(18, 12))
+        gs = fig.add_gridspec(3, 1, height_ratios=[0.8, 2.5, 1], hspace=0.35)
+
+        ax_top = fig.add_subplot(gs[0])
+        ax_mid = fig.add_subplot(gs[1])
+        ax_bot = fig.add_subplot(gs[2])
+
+        if hasattr(self, "avg_group_ret") and self.avg_group_ret is not None:
+            groups = self.avg_group_ret.index
+            avg_returns = self.avg_group_ret.values
+            bars = ax_top.bar(
+                [str(g) for g in groups],
+                avg_returns,
+                alpha=0.7,
+                edgecolor="black",
+                linewidth=1.2,
+            )
+            for bar, value in zip(bars, avg_returns):
+                height = bar.get_height()
+                ax_top.text(
+                    bar.get_x() + bar.get_width() / 2.0,
+                    height,
+                    f"{value:.4f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=10,
+                )
+            ax_top.set_title("Average Returns by Group", fontsize=14, fontweight="bold")
+            ax_top.set_xlabel("Group", fontsize=11)
+            ax_top.set_ylabel("Average Return", fontsize=11)
+            ax_top.grid(True, axis="y", alpha=0.3)
+
+        colors = plt.cm.tab10(np.linspace(0, 1, 10))
+        if (
+            hasattr(self, "avg_group_cum_ret")
+            and self.avg_group_cum_ret is not None
+            and not self.avg_group_cum_ret.empty
+        ):
+            for idx, group_num in enumerate(self.avg_group_cum_ret.columns):
+                ax_mid.plot(
+                    self.avg_group_cum_ret.index,
+                    self.avg_group_cum_ret[group_num],
+                    label=f"Group {group_num}",
+                    color=colors[idx % len(colors)],
+                    linewidth=1.5,
+                    alpha=0.8,
+                )
+
+            if hasattr(self, "cum_ret") and self.cum_ret is not None:
+                overall_cum_ret = self.cum_ret.mean(axis=1)
+                ax_mid.plot(
+                    overall_cum_ret.index,
+                    overall_cum_ret.values,
+                    label="Overall Portfolio",
+                    color="red",
+                    linewidth=2.5,
+                    linestyle="-",
+                    alpha=0.9,
+                )
+
+            ax_mid.set_title("Cumulative Returns by Group and Overall Portfolio", fontsize=14, fontweight="bold")
+            ax_mid.set_xlabel("Date", fontsize=11)
+            ax_mid.set_ylabel("Cumulative Return", fontsize=11)
+            ax_mid.legend(loc="upper left", fontsize=10)
+            ax_mid.grid(True, alpha=0.3)
+
+            if len(self.avg_group_cum_ret.index) > 0:
+                from matplotlib.dates import MonthLocator, DateFormatter
+                ax_mid.xaxis.set_major_locator(MonthLocator(interval=3))
+                ax_mid.xaxis.set_major_formatter(DateFormatter("%Y-%m"))
+                plt.setp(ax_mid.xaxis.get_majorticklabels(), rotation=45, ha="right")
+
+        if (
+            hasattr(self, "rank_ic_time_series")
+            and self.rank_ic_time_series is not None
+            and len(self.rank_ic_time_series) > 0
+        ):
+            x_dates = self.rank_ic_time_series.index
+            x_numeric = range(len(x_dates))
+            
+            bars = ax_bot.bar(
+                x_numeric,
+                self.rank_ic_time_series.values,
+                color="blue",
+                alpha=0.6,
+                width=0.8,
+                label="Rank IC",
+            )
+
+            if (
+                hasattr(self, "cumulative_rank_ic")
+                and self.cumulative_rank_ic is not None
+                and len(self.cumulative_rank_ic) > 0
+            ):
+                ax_bot_twin = ax_bot.twinx()
+                ax_bot_twin.plot(
+                    x_numeric,
+                    self.cumulative_rank_ic.values,
+                    color="red",
+                    linewidth=2,
+                    label="Cumulative Rank IC",
+                    alpha=0.9,
+                )
+                ax_bot_twin.set_ylabel("Cumulative Rank IC", color="red", fontsize=11)
+                ax_bot_twin.tick_params(axis="y", labelcolor="red")
+
+                lines_1, labels_1 = ax_bot.get_legend_handles_labels()
+                lines_2, labels_2 = ax_bot_twin.get_legend_handles_labels()
+                ax_bot.legend(lines_1 + lines_2, labels_1 + labels_2, loc="upper left", fontsize=10)
+            else:
+                ax_bot.legend(loc="upper left", fontsize=10)
+
+            ax_bot.axhline(y=0, color="black", linestyle="--", alpha=0.3)
+            ax_bot.set_title("Rank IC and Cumulative Rank IC Over Time", fontsize=14, fontweight="bold")
+            ax_bot.set_xlabel("Date", fontsize=11)
+            ax_bot.set_ylabel("Rank IC", color="blue", fontsize=11)
+            ax_bot.tick_params(axis="y", labelcolor="blue")
+            ax_bot.grid(True, alpha=0.3)
+            
+            if len(x_dates) > 0:
+                tick_interval = max(1, len(x_dates) // 10)
+                ax_bot.set_xticks(x_numeric[::tick_interval])
+                ax_bot.set_xticklabels([str(d)[:10] for d in x_dates[::tick_interval]], rotation=45, ha="right")
+
+        plt.suptitle("Backtest Summary Visualization", fontsize=16, fontweight="bold", y=0.995)
+        plt.savefig(os.path.join(self.figures_path, "vis_summary.png"), dpi=300, bbox_inches="tight")
+        plt.close()
 
 
 if __name__ == "__main__":
