@@ -141,9 +141,10 @@ class BackTest:
             self.time_index = self.factor_df.index.intersection(self.price_df.index)
             self.price_df = self.price_df.loc[self.time_index]
             self.factor_df = self.factor_df.loc[self.time_index]
-
-        # self.stocks = factor_df.columns.tolist()
-        # assert self.stocks == price_df.columns.to_list(), "factor_df must have the same columns as price_df."
+        
+        # Set stocks after preprocessing to ensure both dataframes have the same columns
+        self.stocks = self.factor_df.columns.tolist()
+        assert self.stocks == self.price_df.columns.to_list(), "factor_df must have the same columns as price_df."
         
         # Automatically run the backtest after initialization
         if self.auto_run:
@@ -1027,12 +1028,15 @@ if __name__ == "__main__":
             price_df = price_df.loc[common_dates]
             factor_df = factor_df.loc[common_dates]
             
+            # Ensure both dataframes have the same columns (stocks/assets)
+            common_columns = price_df.columns.intersection(factor_df.columns)
+            price_df = price_df[common_columns]
+            factor_df = factor_df[common_columns]
+
             # Limit to a reasonable number of columns to prevent issues
-            price_cols = min(5, len(price_df.columns))
-            factor_cols = min(3, len(factor_df.columns))
-            
-            price_df = price_df.iloc[:, :price_cols]
-            factor_df = factor_df.iloc[:, :factor_cols]
+            cols_to_use = min(5, len(common_columns))
+            price_df = price_df.iloc[:, :cols_to_use]
+            factor_df = factor_df.iloc[:, :cols_to_use]
             
             try:
                 bt = BackTest(
