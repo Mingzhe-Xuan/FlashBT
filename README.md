@@ -20,7 +20,7 @@ A comprehensive Python-based backtesting engine for evaluating factor-based inve
 
 ## Overview
 
-The `BackTest` class is a sophisticated backtesting framework designed to evaluate factor-based investment strategies. It enables quantitative analysts and researchers to:
+The `Backtest` class is a sophisticated backtesting framework designed to evaluate factor-based investment strategies. It enables quantitative analysts and researchers to:
 
 - **Test Factor Strategies**: Evaluate the predictive power of factors on asset returns
 - **Compute Portfolio Metrics**: Calculate comprehensive performance indicators including Sharpe ratio, Sortino ratio, Calmar ratio, and maximum drawdown
@@ -103,7 +103,7 @@ seaborn>=0.11.0
 
 ```python
 import pandas as pd
-from flash_bt.bt._backtest import BackTest
+from flash_bt.backtest import Backtest
 
 # Load your data
 price_df = pd.read_csv('price_data.csv', index_col='date')
@@ -114,7 +114,7 @@ price_df.index = pd.to_datetime(price_df.index)
 factor_df.index = pd.to_datetime(factor_df.index)
 
 # Initialize and run backtest
-backtest = BackTest(
+backtest = Backtest(
     factor_df=factor_df,
     price_df=price_df,
     fee=0.0003,          # Transaction fee (0.03%)
@@ -162,10 +162,10 @@ factor_df = pd.DataFrame(
 )
 ```
 
-#### Step 2: Initialize BackTest
+#### Step 2: Initialize Backtest
 
 ```python
-backtest = BackTest(
+backtest = Backtest(
     factor_df=factor_df,
     price_df=price_df,
     rebalance_period=20,
@@ -245,14 +245,14 @@ backtest.plot_avg_group_ret()
 | `market_cap_df` | pd.DataFrame | None | Market capitalization data for each asset at each time point. Required if `weight_method="market_cap"`. Must have same columns as `price_df` |
 | `need_preprocess` | bool | True | Whether to preprocess data before backtesting |
 | `need_normalize` | bool | True | Whether to normalize factor values using z-score |
-| `price_threshold` | float |1e6 | Upper bound for valid price values |
+| `price_threshold` | float | 1e6 | Upper bound for valid price values |
 | `factor_threshold` | float | 10 | Maximum standard deviations from mean allowed for factor values |
 | `need_plot` | bool | True | Whether to generate visualization plots |
 | `metrics_path` | str | None | Path to save backtest metrics (default: `metrics_result/`) |
 | `figures_path` | str | None | Path to save figures (default: `figures_result/`) |
 | `cumprod` | bool | True | Whether to use multiplicative (True) or additive (False) cumulative returns |
 | `auto_run` | bool | False | Whether to automatically run backtest on initialization |
-| `look_back` | int | 60 | Look-back period (in days) for calculating historical statistics used in weighting methods. Used in mean-variance optimization and inverse volatility weighting |
+| `look_back` | int | 69 | Look-back period (in days) for calculating historical statistics used in weighting methods. Used in mean-variance optimization and inverse volatility weighting |
 
 ### Method Parameters
 
@@ -292,7 +292,41 @@ Plots information coefficient analysis.
 **Parameters:**
 - `plot_type` (str): Type of plot. Options: "time_series" or "histogram"
 
+#### `plot()`
+
+Generates all visualization plots including returns, IC, average group returns, and visualization summary.
+
+#### `plot_ret()`
+
+Plots cumulative and daily returns for the portfolio and groups.
+
+#### `plot_avg_group_ret()`
+
+Plots average returns by group as a bar chart.
+
+#### `plot_vis_summary()`
+
+Creates a comprehensive visualization combining all key metrics in one plot.
+
 ## Metrics
+
+The Backtest class provides access to the following attributes after running the backtest:
+
+- `daily_ret` : pd.DataFrame - Daily returns for each asset
+- `cum_ret` : pd.DataFrame - Cumulative returns for each asset
+- `portfolio_daily_ret` : pd.Series - Daily portfolio returns (with transaction fees applied based on turnover)
+- `portfolio_cum_ret` : pd.Series - Cumulative portfolio returns (with transaction fees applied based on turnover)
+- `sharpe_ratio` : float - Annualized Sharpe ratio (calculated from portfolio returns with turnover-based fees)
+- `sortino_ratio` : float - Annualized Sortino ratio (calculated from portfolio returns with turnover-based fees)
+- `calmar_ratio` : float - Annualized Calmar ratio (calculated from portfolio returns with turnover-based fees)
+- `max_drawdown` : float - Maximum drawdown experienced (calculated from portfolio returns with turnover-based fees)
+- `win_rate` : float - Fraction of positive-return periods (calculated from portfolio returns with turnover-based fees)
+- `rank_ic` : float - Rank information coefficient
+- `rank_ic_time_series` : pd.Series - Time series of Rank IC values
+- `cumulative_rank_ic` : pd.Series - Cumulative Rank IC over time
+- `avg_group_ret` : pd.DataFrame - Average return per group per period (with transaction fees applied based on turnover)
+- `avg_group_daily_ret` : pd.DataFrame - Daily returns per group (with transaction fees applied based on turnover)
+- `avg_group_cum_ret` : pd.DataFrame - Cumulative returns per group (with transaction fees applied based on turnover)
 
 ### Performance Metrics
 
@@ -560,8 +594,9 @@ project_directory/
 ├── figures_result/
 │   ├── returns.png
 │   ├── ic.png
-│   └── avg_group_returns.png
-└── _backtest.py
+│   ├── avg_group_returns.png
+│   └── vis_summary.png
+└── backtest.py
 ```
 
 ### Metrics JSON Format
@@ -570,12 +605,46 @@ The `backtest_metrics.json` file contains:
 
 ```json
 {
-  "sharpe_ratio": 1.2345,
-  "sortino_ratio": 1.6789,
-  "calmar_ratio": 0.9876,
-  "max_drawdown": -0.1234,
-  "win_rate": 0.5678,
-  "rank_ic": 0.0456
+  "overall": {
+    "sharpe_ratio": 1.2345,
+    "sortino_ratio": 1.6789,
+    "calmar_ratio": 0.9876,
+    "max_drawdown": -0.1234,
+    "win_rate": 0.5678,
+    "rank_ic": 0.0456,
+    "annual_return": 0.1523,
+    "cumulative_return": 1.4567
+  },
+  "groups": {
+    "group_0": {
+      "annual_return": 0.1234,
+      "cumulative_return": 1.2345,
+      "sharpe_ratio": 0.9876,
+      "sortino_ratio": 1.2345,
+      "calmar_ratio": 0.8765,
+      "max_drawdown": -0.1123,
+      "win_rate": 0.5432,
+      "rank_ic": 0.0456
+    },
+    "group_1": {
+      "annual_return": 0.1345,
+      "cumulative_return": 1.3456,
+      "sharpe_ratio": 1.0987,
+      "sortino_ratio": 1.3456,
+      "calmar_ratio": 0.9876,
+      "max_drawdown": -0.1234,
+      "win_rate": 0.5543,
+      "rank_ic": 0.0456
+    }
+  },
+  "metadata": {
+    "rebalance_period": 20,
+    "n_groups": 5,
+    "weight_method": "equal",
+    "fee": 0.0003,
+    "cumprod": true,
+    "trading_days": 252
+  }
 }
 ```
 
@@ -609,6 +678,13 @@ The `backtest_metrics.json` file contains:
 - Value labels on top of each bar
 - Groups labeled 0 to n_groups-1
 
+#### 4. Visualization Summary (`vis_summary.png`)
+
+- **Top section**: Average returns by group (bar chart)
+- **Middle section**: Cumulative returns by group and overall portfolio
+- **Bottom section**: Rank IC (bars) and cumulative Rank IC (line)
+- Comprehensive visualization combining all key metrics in one plot
+
 ## Examples
 
 ### Example 1: Basic Momentum Factor Backtest
@@ -616,7 +692,7 @@ The `backtest_metrics.json` file contains:
 ```python
 import pandas as pd
 import numpy as np
-from flash_bt.bt._backtest import BackTest
+from flash_bt.backtest import Backtest
 
 # Generate synthetic momentum factor (12-month return)
 np.random.seed(42)
@@ -634,7 +710,7 @@ price_df = pd.DataFrame(
 factor_df = price_df.pct_change(252)
 
 # Run backtest
-backtest = BackTest(
+backtest = Backtest(
     factor_df=factor_df,
     price_df=price_df,
     fee=0.0003,
@@ -652,7 +728,7 @@ print(f"Rank IC: {backtest.rank_ic:.4f}")
 
 ```python
 import pandas as pd
-from flash_bt.bt._backtest import BackTest
+from flash_bt.backtest import Backtest
 
 # Load value factor data (e.g., P/E ratio)
 price_df = pd.read_csv('stock_prices.csv', index_col='date')
@@ -663,7 +739,7 @@ price_df.index = pd.to_datetime(price_df.index)
 factor_df.index = pd.to_datetime(factor_df.index)
 
 # Run backtest with custom settings
-backtest = BackTest(
+backtest = Backtest(
     factor_df=factor_df,
     price_df=price_df,
     fee=0.0003,
@@ -689,10 +765,10 @@ print(backtest.avg_group_ret)
 ### Example 3: Manual Backtest Execution
 
 ```python
-from flash_bt.bt._backtest import BackTest
+from flash_bt.backtest import Backtest
 
 # Initialize without auto-running
-backtest = BackTest(
+backtest = Backtest(
     factor_df=factor_df,
     price_df=price_df,
     fee=0.0003,
@@ -717,7 +793,7 @@ for key, value in metrics.items():
 ### Example 4: Comparing Multiple Factors
 
 ```python
-from flash_bt.bt._backtest import BackTest
+from flash_bt.backtest import Backtest
 
 factors = {
     'momentum': momentum_df,
@@ -728,7 +804,7 @@ factors = {
 results = {}
 
 for factor_name, factor_df in factors.items():
-    backtest = BackTest(
+    backtest = Backtest(
         factor_df=factor_df,
         price_df=price_df,
         fee=0.0003,
@@ -752,11 +828,11 @@ print(results_df)
 ### Example 5: Custom Visualization
 
 ```python
-from flash_bt.bt._backtest import BackTest
+from flash_bt.backtest import Backtest
 import matplotlib.pyplot as plt
 
 # Run backtest
-backtest = BackTest(
+backtest = Backtest(
     factor_df=factor_df,
     price_df=price_df,
     fee=0.0003,
@@ -782,7 +858,7 @@ print(f"ICIR (IC/Std): {rank_ic_series.mean() / rank_ic_series.std():.4f}")
 
 ```python
 import pandas as pd
-from flash_bt.bt._backtest import BackTest
+from flash_bt.backtest import Backtest
 
 # Load data
 price_df = pd.read_csv('stock_prices.csv', index_col='date')
@@ -801,7 +877,7 @@ results = {}
 for method in weight_methods:
     if method == 'market_cap':
         # Market cap weighting requires market_cap_df
-        backtest = BackTest(
+        backtest = Backtest(
             factor_df=factor_df,
             price_df=price_df,
             market_cap_df=market_cap_df,
@@ -813,7 +889,7 @@ for method in weight_methods:
         )
     else:
         # Other methods don't require market_cap_df
-        backtest = BackTest(
+        backtest = Backtest(
             factor_df=factor_df,
             price_df=price_df,
             fee=0.0003,
@@ -978,10 +1054,10 @@ The framework implements several safeguards to prevent forward-looking bias:
    test_price = price_df[split_date:]
    
    # Train on in-sample data
-   backtest_train = BackTest(train_factor, train_price, 21, 5, auto_run=True)
+   backtest_train = Backtest(train_factor, train_price, 21, 5, auto_run=True)
    
    # Test on out-of-sample data
-   backtest_test = BackTest(test_factor, test_price, 21, 5, auto_run=True)
+   backtest_test = Backtest(test_factor, test_price, 21, 5, auto_run=True)
    ```
 
 2. **Cross-Validation**: Use time-series cross-validation for robust results.
@@ -1035,7 +1111,7 @@ The framework implements several safeguards to prevent forward-looking bias:
 - Verify data has sufficient variation
 - This is expected behavior for constant returns
 
-#### 5. Empty Groups in Analysis
+#### 5. ValueError: "Too many n_groups for X assets."
 
 **Cause**: Insufficient assets for specified number of groups.
 
@@ -1099,7 +1175,7 @@ The framework implements several safeguards to prevent forward-looking bias:
 
 If you encounter issues not covered here:
 
-1. Check the code comments in `_backtest.py` for detailed explanations
+1. Check the code comments in `backtest.py` for detailed explanations
 2. Verify your data format matches the expected structure
 3. Start with a simple example and gradually increase complexity
 4. Ensure all dependencies are correctly installed
@@ -1126,8 +1202,8 @@ If you use this framework in your research, please cite appropriately.
 
 ## Version History
 
-- **Current Version**: Comprehensive backtesting framework with factor analysis
-- **Key Features**: Equal-weighted portfolios, quantile grouping, comprehensive metrics, visualization
+- **Current Version**: Comprehensive backtesting framework with factor analysis and advanced visualization
+- **Key Features**: Multiple weighting methods, quantile grouping, comprehensive metrics, advanced visualization (including vis_summary.png)
 
 ---
 
