@@ -10,6 +10,7 @@ class BackTest:
         self,
         factor_df: pd.DataFrame,
         price_df: pd.DataFrame,
+        fee: float,
         rebalance_period: int,
         n_groups: int,
         weight_method: str = "equal",
@@ -32,12 +33,16 @@ class BackTest:
             Factor values for each asset at each time point. Note that the dataframe must have the same columns as price_df and has datetime as index.
         price_df : pd.DataFrame
             Close prices for each asset at each time point. Note that the dataframe must have the same columns as factor_df and has datetime as index.
+        fee : float
+            Transaction fee per trade (as a fraction of the trade amount). Default is 0.0003.
+            Fee is applied based on portfolio turnover at each rebalancing: fee_amount = portfolio_value × fee × turnover,
+            where turnover = Σ|weight_change| / 2.
         rebalance_period : int
             Rebalancing frequency (number of periods between portfolio shifts). Day as the unit.
         n_groups : int
             Number of quantile groups into which assets are partitioned.
         weight_method : str
-            Weighting scheme applied within each group. Options: "equal", "market_cap". Default is "equal".
+            Weighting scheme applied within each group. Options: "equal". Default is "equal".
         need_preprocess : bool
             Whether to preprocess data before back-testing. Default is True.
         need_normalize : bool
@@ -59,26 +64,34 @@ class BackTest:
 
         Attributes
         ----------
-        daily_ret : pd.Series
-            Daily portfolio returns.
-        cum_ret : pd.Series
-            Cumulative portfolio returns.
+        daily_ret : pd.DataFrame
+            Daily returns for each asset.
+        cum_ret : pd.DataFrame
+            Cumulative returns for each asset.
+        portfolio_daily_ret : pd.Series
+            Daily portfolio returns (with transaction fees applied based on turnover).
+        portfolio_cum_ret : pd.Series
+            Cumulative portfolio returns (with transaction fees applied based on turnover).
         sharpe_ratio : float
-            Annualized Sharpe ratio.
+            Annualized Sharpe ratio (calculated from portfolio returns with turnover-based fees).
         sortino_ratio : float
-            Annualized Sortino ratio.
+            Annualized Sortino ratio (calculated from portfolio returns with turnover-based fees).
         calmar_ratio : float
-            Annualized Calmar ratio.
+            Annualized Calmar ratio (calculated from portfolio returns with turnover-based fees).
         max_drawdown : float
-            Maximum drawdown experienced.
+            Maximum drawdown experienced (calculated from portfolio returns with turnover-based fees).
         win_rate : float
-            Fraction of positive-return periods.
+            Fraction of positive-return periods (calculated from portfolio returns with turnover-based fees).
         ic : float
             Information coefficient (factor vs. forward return).
         rank_ic : float
             Rank information coefficient.
         avg_group_ret : pd.DataFrame
-            Average return per group per period.
+            Average return per group per period (with transaction fees applied based on turnover).
+        avg_group_daily_ret : pd.DataFrame
+            Daily returns per group (with transaction fees applied based on turnover).
+        avg_group_cum_ret : pd.DataFrame
+            Cumulative returns per group (with transaction fees applied based on turnover).
 
         Methods
         -------
@@ -97,6 +110,7 @@ class BackTest:
         """
         self.factor_df = factor_df
         self.price_df = price_df
+        self.fee = fee
         self.rebalance_period = rebalance_period
         self.n_groups = n_groups
         self.weight_method = weight_method
@@ -178,6 +192,14 @@ class BackTest:
             Close prices for each asset at each time point.
         factor_df : pd.DataFrame
             Factor values for each asset at each time point.
+        
+        Notes
+        -----
+        Transaction fees are applied based on portfolio turnover at each rebalancing:
+        - Turnover = Σ|weight_change| / 2, where weight_change is the difference between
+          current and previous portfolio weights
+        - Fee amount = portfolio_value × fee × turnover
+        - This properly reflects actual trading costs rather than assuming 100% turnover
         """
         if len(factor_df) == 0 or len(price_df) == 0:
             raise ValueError("No data provided.")
@@ -227,26 +249,34 @@ class BackTest:
     ) -> dict:
         r"""
         Compute back-test metrics. The metrics include:
-        daily_ret : pd.Series
-            Daily portfolio returns.
-        cum_ret : pd.Series
-            Cumulative portfolio returns.
+        daily_ret : pd.DataFrame
+            Daily returns for each asset.
+        cum_ret : pd.DataFrame
+            Cumulative returns for each asset.
+        portfolio_daily_ret : pd.Series
+            Daily portfolio returns (with transaction fees applied based on turnover).
+        portfolio_cum_ret : pd.Series
+            Cumulative portfolio returns (with transaction fees applied based on turnover).
         sharpe_ratio : float
-            Annualized Sharpe ratio.
+            Annualized Sharpe ratio (calculated from portfolio returns with turnover-based fees).
         sortino_ratio : float
-            Annualized Sortino ratio.
+            Annualized Sortino ratio (calculated from portfolio returns with turnover-based fees).
         calmar_ratio : float
-            Annualized Calmar ratio.
+            Annualized Calmar ratio (calculated from portfolio returns with turnover-based fees).
         max_drawdown : float
-            Maximum drawdown experienced.
+            Maximum drawdown experienced (calculated from portfolio returns with turnover-based fees).
         win_rate : float
-            Fraction of positive-return periods.
+            Fraction of positive-return periods (calculated from portfolio returns with turnover-based fees).
         ic : float
             Information coefficient (factor vs. forward return).
         rank_ic : float
             Rank information coefficient.
         avg_group_ret : pd.DataFrame
-            Average return per group per period.
+            Average return per group per period (with transaction fees applied based on turnover).
+        avg_group_daily_ret : pd.DataFrame
+            Daily returns per group (with transaction fees applied based on turnover).
+        avg_group_cum_ret : pd.DataFrame
+            Cumulative returns per group (with transaction fees applied based on turnover).
 
         Parameters
         ----------
@@ -282,6 +312,76 @@ class BackTest:
             avg_cum_ret = (
                 cum_ret_df.mean(axis=1) if cumprod else cum_ret_df.mean(axis=1)
             )
+
+        # Apply transaction fees based on turnover at rebalancing points
+        # Track portfolio value and apply fees at rebalancing
+        portfolio_value = 1.0  # Start with initial portfolio value of 1
+        portfolio_daily_values = pd.Series(index=avg_daily_returns.index, dtype=float)
+        portfolio_daily_values.iloc[0] = portfolio_value
+        
+        # Track previous weights to calculate turnover
+        prev_weights = None
+        prev_assets = None
+        
+        rebalance_dates = factor_df.index[:: self.rebalance_period]
+        
+        for i, date in enumerate(avg_daily_returns.index):
+            # Check if this is a rebalancing day
+            is_rebalance = date in rebalance_dates
+            
+            if is_rebalance and i > 0:
+                # Calculate current weights (equal weighting across available assets)
+                # Get assets that have valid returns on this date
+                current_assets = daily_ret_df.columns[daily_ret_df.loc[date].notna()].tolist()
+                
+                if len(current_assets) > 0:
+                    current_weights = pd.Series(1.0 / len(current_assets), index=current_assets)
+                    
+                    # Calculate turnover if we have previous weights
+                    if prev_weights is not None and prev_assets is not None:
+                        # Calculate turnover: sum of absolute weight changes / 2
+                        # Create aligned weight series
+                        all_assets = list(set(prev_assets + current_assets))
+                        prev_weights_aligned = pd.Series(0.0, index=all_assets)
+                        current_weights_aligned = pd.Series(0.0, index=all_assets)
+                        
+                        for asset in prev_assets:
+                            if asset in prev_weights.index:
+                                prev_weights_aligned[asset] = prev_weights[asset]
+                        
+                        for asset in current_assets:
+                            if asset in current_weights.index:
+                                current_weights_aligned[asset] = current_weights[asset]
+                        
+                        # Calculate turnover
+                        turnover = (current_weights_aligned - prev_weights_aligned).abs().sum() / 2.0
+                        
+                        # Apply fee based on turnover
+                        fee_amount = portfolio_value * self.fee * turnover
+                        portfolio_value -= fee_amount
+                    
+                    # Update previous weights and assets
+                    prev_weights = current_weights
+                    prev_assets = current_assets
+            
+            # Apply daily return
+            if i > 0:
+                portfolio_value *= (1 + avg_daily_returns.iloc[i])
+            
+            portfolio_daily_values.iloc[i] = portfolio_value
+        
+        # Calculate daily returns from portfolio values
+        portfolio_daily_ret = portfolio_daily_values.pct_change().fillna(0)
+        
+        # Calculate cumulative returns from portfolio values
+        if cumprod:
+            portfolio_cum_ret = (portfolio_daily_values / portfolio_daily_values.iloc[0]) - 1
+        else:
+            portfolio_cum_ret = portfolio_daily_values - portfolio_daily_values.iloc[0]
+        
+        # Update avg_daily_returns and avg_cum_ret to use fee-adjusted returns
+        avg_daily_returns = portfolio_daily_ret
+        avg_cum_ret = portfolio_cum_ret
 
         # Calculate Sharpe ratio with protection against division by zero
         daily_mean = avg_daily_returns.mean()
@@ -416,6 +516,9 @@ class BackTest:
 
         # Create a DataFrame to store daily group returns for visualization
         all_group_daily_returns = {}
+        all_group_portfolio_values = {}  # Track portfolio values for each group
+        all_group_prev_weights = {}  # Track previous weights for turnover calculation
+        all_group_prev_assets = {}  # Track previous assets for turnover calculation
 
         for date in rebalance_dates:
             # Get factor values at this rebalance date
@@ -454,7 +557,51 @@ class BackTest:
                                 group_assets
                             )
                             if len(available_assets) > 0:
-                                group_returns = []
+                                # Initialize portfolio value series for this group if not exists
+                                if group_num not in all_group_portfolio_values:
+                                    all_group_portfolio_values[group_num] = pd.Series(dtype=float)
+                                
+                                # Get previous portfolio value (last value from previous period)
+                                if len(all_group_portfolio_values[group_num]) > 0:
+                                    prev_portfolio_value = all_group_portfolio_values[group_num].iloc[-1]
+                                else:
+                                    prev_portfolio_value = 1.0
+                                
+                                # Calculate current weights (equal weighting)
+                                current_weights = pd.Series(1.0 / len(available_assets), index=available_assets)
+                                
+                                # Calculate turnover and apply fee
+                                if group_num in all_group_prev_weights and group_num in all_group_prev_assets:
+                                    prev_weights = all_group_prev_weights[group_num]
+                                    prev_assets = all_group_prev_assets[group_num]
+                                    
+                                    # Create aligned weight series
+                                    all_assets = list(set(prev_assets + available_assets))
+                                    prev_weights_aligned = pd.Series(0.0, index=all_assets)
+                                    current_weights_aligned = pd.Series(0.0, index=all_assets)
+                                    
+                                    for asset in prev_assets:
+                                        if asset in prev_weights.index:
+                                            prev_weights_aligned[asset] = prev_weights[asset]
+                                    
+                                    for asset in available_assets:
+                                        if asset in current_weights.index:
+                                            current_weights_aligned[asset] = current_weights[asset]
+                                    
+                                    # Calculate turnover
+                                    turnover = (current_weights_aligned - prev_weights_aligned).abs().sum() / 2.0
+                                    
+                                    # Apply fee based on turnover
+                                    fee_amount = prev_portfolio_value * self.fee * turnover
+                                    portfolio_value = prev_portfolio_value - fee_amount
+                                else:
+                                    portfolio_value = prev_portfolio_value
+                                
+                                # Store current weights and assets for next rebalancing
+                                all_group_prev_weights[group_num] = current_weights
+                                all_group_prev_assets[group_num] = available_assets
+                                
+                                # Calculate returns for each day in the period
                                 for day_idx in range(date_idx + 1, end_idx):
                                     if day_idx < len(daily_ret_df.index):
                                         day_date = daily_ret_df.index[day_idx]
@@ -477,9 +624,12 @@ class BackTest:
                                                     weighted_return = day_rets.mean()
 
                                                 if not pd.isna(weighted_return):
-                                                    group_returns.append(
-                                                        weighted_return
-                                                    )
+                                                    # Update portfolio value
+                                                    portfolio_value *= (1 + weighted_return)
+                                                    
+                                                    # Store portfolio value
+                                                    all_group_portfolio_values[group_num].loc[day_date] = portfolio_value
+                                                    
                                                     # Store the daily return for this group
                                                     if (
                                                         group_num
@@ -492,10 +642,14 @@ class BackTest:
                                                         day_date
                                                     ] = weighted_return
 
-                            if group_returns:
-                                avg_group_ret_by_period.loc[date, group_num] = np.mean(
-                                    group_returns
-                                )
+                            if group_num in all_group_portfolio_values and len(all_group_portfolio_values[group_num]) > 0:
+                                # Calculate average return for this period
+                                period_values = all_group_portfolio_values[group_num].values
+                                if len(period_values) >= 2:
+                                    period_return = (period_values[-1] / period_values[0]) - 1
+                                    avg_group_ret_by_period.loc[date, group_num] = period_return
+                                else:
+                                    avg_group_ret_by_period.loc[date, group_num] = np.nan
                             else:
                                 avg_group_ret_by_period.loc[date, group_num] = np.nan
                         else:
@@ -548,10 +702,52 @@ class BackTest:
                                 available_assets = daily_ret_df.columns.intersection(
                                     group_assets
                                 )
-                                group_returns = (
-                                    []
-                                )  # Initialize here to ensure it exists in all code paths
                                 if len(available_assets) > 0:
+                                    # Initialize portfolio value for this group if not exists
+                                    if group_num not in all_group_portfolio_values:
+                                        all_group_portfolio_values[group_num] = {}
+                                    
+                                    # Get previous portfolio value
+                                    prev_portfolio_value = all_group_portfolio_values[group_num].get(
+                                        factor_df.index[date_idx - 1] if date_idx > 0 else date, 1.0
+                                    )
+                                    
+                                    # Track previous weights for turnover calculation
+                                    prev_group_weights = all_group_daily_returns.get(f"weights_{group_num}", None)
+                                    prev_group_assets = all_group_daily_returns.get(f"assets_{group_num}", None)
+                                    
+                                    # Calculate current weights (equal weighting)
+                                    current_weights = pd.Series(1.0 / len(available_assets), index=available_assets)
+                                    
+                                    # Calculate turnover and apply fee
+                                    if prev_group_weights is not None and prev_group_assets is not None:
+                                        # Create aligned weight series
+                                        all_assets = list(set(prev_group_assets + available_assets))
+                                        prev_weights_aligned = pd.Series(0.0, index=all_assets)
+                                        current_weights_aligned = pd.Series(0.0, index=all_assets)
+                                        
+                                        for asset in prev_group_assets:
+                                            if asset in prev_group_weights.index:
+                                                prev_weights_aligned[asset] = prev_group_weights[asset]
+                                        
+                                        for asset in available_assets:
+                                            if asset in current_weights.index:
+                                                current_weights_aligned[asset] = current_weights[asset]
+                                        
+                                        # Calculate turnover
+                                        turnover = (current_weights_aligned - prev_weights_aligned).abs().sum() / 2.0
+                                        
+                                        # Apply fee based on turnover
+                                        fee_amount = prev_portfolio_value * self.fee * turnover
+                                        portfolio_value = prev_portfolio_value - fee_amount
+                                    else:
+                                        portfolio_value = prev_portfolio_value
+                                    
+                                    # Store current weights and assets for next rebalancing
+                                    all_group_daily_returns[f"weights_{group_num}"] = current_weights
+                                    all_group_daily_returns[f"assets_{group_num}"] = available_assets
+                                    
+                                    # Calculate returns for each day in the period
                                     for day_idx in range(date_idx + 1, end_idx):
                                         if day_idx < len(daily_ret_df.index):
                                             day_date = daily_ret_df.index[day_idx]
@@ -578,9 +774,12 @@ class BackTest:
                                                         )
 
                                                     if not pd.isna(weighted_return):
-                                                        group_returns.append(
-                                                            weighted_return
-                                                        )
+                                                        # Update portfolio value
+                                                        portfolio_value *= (1 + weighted_return)
+                                                        
+                                                        # Store portfolio value
+                                                        all_group_portfolio_values[group_num][day_date] = portfolio_value
+                                                        
                                                         # Store the daily return for this group
                                                         if (
                                                             group_num
@@ -593,14 +792,16 @@ class BackTest:
                                                             group_num
                                                         ][day_date] = weighted_return
 
-                                if group_returns:
-                                    avg_group_ret_by_period.loc[date, group_num] = (
-                                        np.mean(group_returns)
-                                    )
-                                else:
-                                    avg_group_ret_by_period.loc[date, group_num] = (
-                                        np.nan
-                                    )
+                                    if group_num in all_group_portfolio_values and len(all_group_portfolio_values[group_num]) > 0:
+                                        # Calculate average return for this period
+                                        period_values = list(all_group_portfolio_values[group_num].values())
+                                        if len(period_values) >= 2:
+                                            period_return = (period_values[-1] / period_values[0]) - 1
+                                            avg_group_ret_by_period.loc[date, group_num] = period_return
+                                        else:
+                                            avg_group_ret_by_period.loc[date, group_num] = np.nan
+                                    else:
+                                        avg_group_ret_by_period.loc[date, group_num] = np.nan
                             else:
                                 avg_group_ret_by_period.loc[date, group_num] = np.nan
 
@@ -610,23 +811,29 @@ class BackTest:
         )  # Average across time axis (axis=0)
 
         # Convert all_group_daily_returns to a DataFrame for visualization
-        if all_group_daily_returns:
+        # all_group_daily_returns now only contains actual return data (int keys)
+        group_returns_data = all_group_daily_returns
+        
+        if group_returns_data:
             # Get all unique dates across all groups
             all_dates = set()
-            for group_daily_returns in all_group_daily_returns.values():
+            for group_daily_returns in group_returns_data.values():
                 all_dates.update(group_daily_returns.keys())
             all_dates = sorted(list(all_dates))
 
             # Create DataFrame for group daily returns
             avg_group_daily_ret = pd.DataFrame(
-                index=all_dates, columns=range(len(all_group_daily_returns))
+                index=all_dates, columns=range(len(group_returns_data))
             )
-            for group_num, group_daily_returns in all_group_daily_returns.items():
+            for group_num, group_daily_returns in group_returns_data.items():
                 for date, ret in group_daily_returns.items():
                     avg_group_daily_ret.loc[date, group_num] = ret
 
-            # Calculate cumulative returns for each group
-            avg_group_cum_ret = avg_group_daily_ret.fillna(0).cumsum()
+            # Calculate cumulative returns for each group (using same method as portfolio)
+            if cumprod:
+                avg_group_cum_ret = (1 + avg_group_daily_ret).cumprod() - 1
+            else:
+                avg_group_cum_ret = avg_group_daily_ret.cumsum()
         else:
             avg_group_daily_ret = pd.DataFrame()
             avg_group_cum_ret = pd.DataFrame()
@@ -634,6 +841,8 @@ class BackTest:
         return {
             "daily_ret": daily_ret_df,
             "cum_ret": cum_ret_df,
+            "portfolio_daily_ret": avg_daily_returns,
+            "portfolio_cum_ret": avg_cum_ret,
             "sharpe_ratio": sharpe_ratio,
             "sortino_ratio": sortino_ratio,
             "calmar_ratio": calmar_ratio,
@@ -671,6 +880,8 @@ class BackTest:
         # Store metrics as instance variables
         self.daily_ret = metrics_dict["daily_ret"]
         self.cum_ret = metrics_dict["cum_ret"]
+        self.portfolio_daily_ret = metrics_dict["portfolio_daily_ret"]
+        self.portfolio_cum_ret = metrics_dict["portfolio_cum_ret"]
         self.sharpe_ratio = metrics_dict["sharpe_ratio"]
         self.sortino_ratio = metrics_dict["sortino_ratio"]
         self.calmar_ratio = metrics_dict["calmar_ratio"]
@@ -687,9 +898,9 @@ class BackTest:
         import json
 
         # Calculate additional metrics
-        # Overall portfolio metrics
-        overall_daily_returns = self.daily_ret.mean(axis=1)
-        overall_cumulative_return = self.cum_ret.mean(axis=1)
+        # Overall portfolio metrics (using portfolio returns with fees)
+        overall_daily_returns = self.portfolio_daily_ret
+        overall_cumulative_return = self.portfolio_cum_ret
         
         # Annual return calculation
         if len(overall_daily_returns) > 0:
@@ -804,6 +1015,7 @@ class BackTest:
                 "rebalance_period": self.rebalance_period,
                 "n_groups": self.n_groups,
                 "weight_method": self.weight_method,
+                "fee": float(self.fee),
                 "cumprod": self.cumprod,
                 "trading_days": len(overall_daily_returns),
             },
@@ -830,8 +1042,8 @@ class BackTest:
         # Plot cumulative returns
         # Plot overall portfolio return with bold red line first
         ax[0].plot(
-            self.cum_ret.index,
-            self.cum_ret.mean(axis=1),
+            self.portfolio_cum_ret.index,
+            self.portfolio_cum_ret,
             label="Overall Portfolio Return",
             color="red",
             linewidth=3,
@@ -862,8 +1074,8 @@ class BackTest:
         # Plot daily returns
         # Plot overall daily return with bold red line first
         ax[1].plot(
-            self.daily_ret.index,
-            self.daily_ret.mean(axis=1),
+            self.portfolio_daily_ret.index,
+            self.portfolio_daily_ret,
             label="Overall Daily Return",
             color="red",
             linewidth=2,
@@ -1178,11 +1390,10 @@ class BackTest:
                     alpha=0.8,
                 )
 
-            if hasattr(self, "cum_ret") and self.cum_ret is not None:
-                overall_cum_ret = self.cum_ret.mean(axis=1)
+            if hasattr(self, "portfolio_cum_ret") and self.portfolio_cum_ret is not None:
                 ax_mid.plot(
-                    overall_cum_ret.index,
-                    overall_cum_ret.values,
+                    self.portfolio_cum_ret.index,
+                    self.portfolio_cum_ret.values,
                     label="Overall Portfolio",
                     color="red",
                     linewidth=2.5,
@@ -1275,6 +1486,7 @@ if __name__ == "__main__":
         bt = BackTest(
             factor_df=factor_df,
             price_df=price_df,
+            fee=3 * 1e-4,
             rebalance_period=5,
             n_groups=5,
             weight_method="equal",
