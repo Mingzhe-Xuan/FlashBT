@@ -1,6 +1,6 @@
-# BackTesting Framework
-
-A comprehensive Python-based backtesting engine for evaluating factor-based investment strategies. This framework provides robust tools for analyzing factor performance, computing portfolio metrics, and visualizing results with professional-grade plots.
+# Flash BackTesting Framework
+  
+FlashBT, A comprehensive, convenient and adaptable Python-based backtesting engine for evaluating factor-based investment strategies. This framework provides robust tools for analyzing factor performance, computing portfolio metrics, and visualizing results with professional-grade plots. The flash_bt framework offers flexible customization options, easy-to-use API, and seamless integration with financial data analysis workflows.
 
 ## Table of Contents
 
