@@ -252,6 +252,7 @@ backtest.plot_avg_group_ret()
 | `figures_path` | str | None | Path to save figures (default: `figures_result/`) |
 | `cumprod` | bool | True | Whether to use multiplicative (True) or additive (False) cumulative returns |
 | `auto_run` | bool | False | Whether to automatically run backtest on initialization |
+| `look_back` | int | 60 | Look-back period (in days) for calculating historical statistics used in weighting methods. Used in mean-variance optimization and inverse volatility weighting |
 
 ### Method Parameters
 
@@ -473,7 +474,7 @@ where $\sigma_i$ is the historical volatility of asset $i$, calculated using a r
 $$\sigma_i = \sqrt{\frac{1}{W-1}\sum_{t=T-W+1}^{T} (r_{i,t} - \bar{r}_i)^2}$$
 
 where:
-- $W$ is the window size (20 trading days)
+- $W$ is the window size (controlled by `look_back` parameter, default 60 trading days)
 - $r_{i,t}$ is the return of asset $i$ at time $t$
 - $\bar{r}_i$ is the mean return of asset $i$ over the window
 
@@ -481,6 +482,7 @@ where:
 - Risk-aware weighting
 - Lower volatility assets receive higher weights
 - Suitable for risk-averse strategies
+- Window size can be adjusted via `look_back` parameter
 
 #### 4. Mean-Variance Optimization (`weight_method="mean_var"`)
 
@@ -494,7 +496,7 @@ where:
 - $1$ is a vector of ones
 - $\Sigma^{-1}$ is the inverse of the covariance matrix
 
-The covariance matrix is estimated using historical returns (60-day window):
+The covariance matrix is estimated using historical returns (controlled by `look_back` parameter, default 60 trading days):
 
 $$\Sigma_{i,j} = \frac{1}{T-1}\sum_{t=1}^{T} (r_{i,t} - \bar{r}_i)(r_{j,t} - \bar{r}_j)$$
 

@@ -24,7 +24,7 @@ class BackTest:
         figures_path: str = None,
         cumprod: bool = True,
         auto_run: bool = False,
-        look_back: int = 60,
+        look_back: int = 69,
     ):
         r"""
         Back-test engine for factor-based strategies.
@@ -74,7 +74,7 @@ class BackTest:
         look_back : int
             Look-back period (in days) for calculating historical statistics used in weighting methods.
             Used in mean-variance optimization (60 days by default) and inverse volatility weighting (20 days).
-            Default is 60.
+            Default is 69.
 
         Attributes
         ----------
@@ -337,8 +337,8 @@ class BackTest:
         # Precompute volatility for inv_vol method
         if self.weight_method == "inv_vol":
             # Calculate historical volatility for each asset
-            # Use rolling window of 20 trading days (approximately 1 month)
-            volatility_df = daily_ret_df.rolling(window=20, min_periods=10).std()
+            # Use rolling window based on look_back parameter
+            volatility_df = daily_ret_df.rolling(window=self.look_back, min_periods=max(10, self.look_back//2)).std()
         
         for i, date in enumerate(daily_ret_df.index):
             # Check if this is a rebalancing day
@@ -401,7 +401,7 @@ class BackTest:
                     elif self.weight_method == "mean_var":
                         # Mean-variance optimization (Markowitz portfolio)
                         # Use historical returns to estimate mean and covariance
-                        lookback_period = 60  # Use 60 trading days for estimation
+                        lookback_period = self.look_back
                         
                         if i >= lookback_period:
                             # Get historical returns for lookback period
