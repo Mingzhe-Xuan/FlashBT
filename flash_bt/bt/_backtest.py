@@ -42,10 +42,11 @@ class BackTest:
         n_groups : int
             Number of quantile groups into which assets are partitioned.
         weight_method : str
-            Weighting scheme applied within each group. Options: "equal", "factor", "inv_vol". Default is "equal".
+            Weighting scheme applied within each group. Options: "equal", "factor", "inv_vol", "mean_var". Default is "equal".
             - "equal": Equal weighting across all assets.
             - "factor": Weight assets proportionally to their factor values (linear factor weighting).
             - "inv_vol": Weight assets inversely proportional to their historical volatility.
+            - "mean_var": Mean-variance optimization (Markowitz portfolio) maximizing Sharpe ratio.
         need_preprocess : bool
             Whether to preprocess data before back-testing. Default is True.
         need_normalize : bool
@@ -139,7 +140,8 @@ class BackTest:
         supported_methods = [
             "equal",
             "factor",
-            "inv_vol"
+            "inv_vol",
+            "mean_var"
         ]  # Add new methods to this list as they are implemented
         if weight_method not in supported_methods:
             raise ValueError(
@@ -360,6 +362,66 @@ class BackTest:
                                 current_weights = pd.Series(1.0 / len(current_assets), index=current_assets)
                         else:
                             # Fallback to equal weighting if volatility data not available
+                            current_weights = pd.Series(1.0 / len(current_assets), index=current_assets)
+                    
+                    elif self.weight_method == "mean_var":
+                        # Mean-variance optimization (Markowitz portfolio)
+                        # Use historical returns to estimate mean and covariance
+                        lookback_period = 60  # Use 60 trading days for estimation
+                        
+                        if i >= lookback_period:
+                            # Get historical returns for lookback period
+                            hist_returns = daily_ret_df.iloc[i-lookback_period:i]
+                            
+                            # Filter to current assets
+                            hist_returns = hist_returns[current_assets].dropna(axis=1, how='all')
+                            valid_assets = hist_returns.columns.tolist()
+                            
+                            if len(valid_assets) > 1:
+                                # Calculate expected returns (mean) and covariance matrix
+                                mu = hist_returns.mean().values
+                                cov_matrix = hist_returns.cov().values
+                                
+                                # Add small regularization to covariance matrix for numerical stability
+                                cov_matrix = cov_matrix + np.eye(len(valid_assets)) * 1e-8
+                                
+                                try:
+                                    # Markowitz optimal weights: w* = Σ^-1 * μ / (1^T * Σ^-1 * μ)
+                                    cov_inv = np.linalg.inv(cov_matrix)
+                                    ones = np.ones(len(valid_assets))
+                                    
+                                    # Calculate numerator: Σ^-1 * μ
+                                    numerator = cov_inv @ mu
+                                    
+                                    # Calculate denominator: 1^T * Σ^-1 * μ
+                                    denominator = ones @ numerator
+                                    
+                                    # Calculate optimal weights
+                                    if abs(denominator) > 1e-10:
+                                        optimal_weights = numerator / denominator
+                                        
+                                        # Ensure weights are non-negative (long-only constraint)
+                                        optimal_weights = np.maximum(optimal_weights, 0)
+                                        
+                                        # Normalize to sum to 1
+                                        if optimal_weights.sum() > 0:
+                                            optimal_weights = optimal_weights / optimal_weights.sum()
+                                        else:
+                                            # Fallback to equal weighting
+                                            optimal_weights = np.ones(len(valid_assets)) / len(valid_assets)
+                                    else:
+                                        # Fallback to equal weighting
+                                        optimal_weights = np.ones(len(valid_assets)) / len(valid_assets)
+                                    
+                                    current_weights = pd.Series(optimal_weights, index=valid_assets)
+                                except (np.linalg.LinAlgError, ValueError):
+                                    # Fallback to equal weighting if matrix inversion fails
+                                    current_weights = pd.Series(1.0 / len(valid_assets), index=valid_assets)
+                            else:
+                                # Fallback to equal weighting
+                                current_weights = pd.Series(1.0 / len(current_assets), index=current_assets)
+                        else:
+                            # Not enough historical data, fallback to equal weighting
                             current_weights = pd.Series(1.0 / len(current_assets), index=current_assets)
                     
                     else:
@@ -1515,8 +1577,8 @@ if __name__ == "__main__":
     import os
 
     if os.path.exists("example_price.csv") and os.path.exists("example_factors.csv"):
-        price_df = pd.read_csv("example_price.csv", index_col="time")
-        factor_df = pd.read_csv("example_factors.csv", index_col="Date")
+        price_df = pd.read_csv("example_price.csv", index_col=0)
+        factor_df = pd.read_csv("example_factors.csv", index_col=0)
 
         # Convert index to datetime
         price_df.index = pd.to_datetime(price_df.index)
@@ -1528,7 +1590,7 @@ if __name__ == "__main__":
             fee=3 * 1e-4,
             rebalance_period=5,
             n_groups=5,
-            weight_method="inv_vol",
+            weight_method="mean_var",
             need_plot=True,
             need_preprocess=True,
         )
