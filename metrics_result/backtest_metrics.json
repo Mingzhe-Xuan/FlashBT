@@ -1,13 +1,13 @@
 {
     "overall": {
-        "sharpe_ratio": 0.17391289773023422,
-        "sortino_ratio": 0.26512076130739354,
-        "calmar_ratio": 0.027275967004342965,
-        "max_drawdown": -0.2540449303443132,
-        "win_rate": 0.453030303030303,
+        "sharpe_ratio": 0.1493226161754162,
+        "sortino_ratio": 0.22203224713540137,
+        "calmar_ratio": 0.021680928339685244,
+        "max_drawdown": -0.25477659786244067,
+        "win_rate": 0.46060606060606063,
         "rank_ic": -0.02018262777921594,
-        "annual_return": 0.01531449383089556,
-        "cumulative_return": 0.040608211746610445
+        "annual_return": 0.01083183032529167,
+        "cumulative_return": 0.028618392666198478
     },
     "groups": {
         "group_0": {
@@ -64,7 +64,7 @@
     "metadata": {
         "rebalance_period": 5,
         "n_groups": 5,
-        "weight_method": "mean_var",
+        "weight_method": "market_cap",
         "fee": 0.00030000000000000003,
         "cumprod": true,
         "trading_days": 660

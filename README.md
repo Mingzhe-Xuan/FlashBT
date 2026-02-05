@@ -32,7 +32,7 @@ The `BackTest` class is a sophisticated backtesting framework designed to evalua
 
 1. **Factor-Based Portfolio Construction**: Assets are grouped into quantiles based on factor values
 2. **Flexible Rebalancing**: Customizable rebalancing frequency (in days)
-3. **Multiple Weighting Schemes**: Currently supports equal-weighted portfolios (extensible design for future methods)
+3. **Multiple Weighting Schemes**: Supports five weighting methods: equal, factor-based, inverse volatility, mean-variance optimization, and market capitalization
 4. **Robust Preprocessing**: Automated data cleaning, outlier removal, and normalization
 5. **Comprehensive Metrics**: Suite of risk-adjusted performance measures
 6. **Professional Visualization**: High-quality plots for analysis and presentation
@@ -103,7 +103,7 @@ seaborn>=0.11.0
 
 ```python
 import pandas as pd
-from _backtest import BackTest
+from flash_bt.bt._backtest import BackTest
 
 # Load your data
 price_df = pd.read_csv('price_data.csv', index_col='date')
@@ -117,6 +117,7 @@ factor_df.index = pd.to_datetime(factor_df.index)
 backtest = BackTest(
     factor_df=factor_df,
     price_df=price_df,
+    fee=0.0003,          # Transaction fee (0.03%)
     rebalance_period=20,  # Rebalance every 20 trading days
     n_groups=5,           # Create 5 quantile groups
     weight_method='equal',
@@ -190,6 +191,8 @@ metrics = backtest.run()
 
 #### Step 4: Access Results
 
+Please note that the results are only accessible after bt.run() is called. Otherwise, they will be None.
+
 ```python
 # Portfolio returns
 daily_returns = backtest.daily_ret
@@ -235,12 +238,14 @@ backtest.plot_avg_group_ret()
 |-----------|------|---------|-------------|
 | `factor_df` | pd.DataFrame | Required | Factor values for each asset at each time point. Must have same columns as `price_df` |
 | `price_df` | pd.DataFrame | Required | Close prices for each asset at each time point. Must have same columns as `factor_df` |
+| `fee` | float | Required | Transaction fee per trade (as a fraction of trade amount). Default is 0.0003. Fee is applied based on portfolio turnover at each rebalancing: fee_amount = portfolio_value × fee × turnover, where turnover = Σ|weight_change| / 2 |
 | `rebalance_period` | int | Required | Rebalancing frequency in days. Number of periods between portfolio shifts |
 | `n_groups` | int | Required | Number of quantile groups for asset partitioning |
-| `weight_method` | str | "equal" | Weighting scheme within groups. Currently supports: "equal" |
+| `weight_method` | str | "equal" | Weighting scheme within groups. Options: "equal", "factor", "inv_vol", "mean_var", "market_cap". See [Weighting Methods](#weighting-methods) for details |
+| `market_cap_df` | pd.DataFrame | None | Market capitalization data for each asset at each time point. Required if `weight_method="market_cap"`. Must have same columns as `price_df` |
 | `need_preprocess` | bool | True | Whether to preprocess data before backtesting |
 | `need_normalize` | bool | True | Whether to normalize factor values using z-score |
-| `price_threshold` | float | 1e6 | Upper bound for valid price values |
+| `price_threshold` | float |1e6 | Upper bound for valid price values |
 | `factor_threshold` | float | 10 | Maximum standard deviations from mean allowed for factor values |
 | `need_plot` | bool | True | Whether to generate visualization plots |
 | `metrics_path` | str | None | Path to save backtest metrics (default: `metrics_result/`) |
@@ -423,6 +428,123 @@ $$r_{portfolio,t} = \frac{1}{N} \sum_{i=1}^{N} r_{i,t}$$
 
 where $N$ is the total number of assets.
 
+### Weighting Methods
+
+The framework supports five different weighting schemes for portfolio construction:
+
+#### 1. Equal Weighting (`weight_method="equal"`)
+
+All assets receive equal weights:
+
+$$w_i = \frac{1}{N}$$
+
+where $N$ is the number of assets in the portfolio.
+
+**Characteristics:**
+- Simple and transparent
+- No bias toward any particular asset
+- Suitable for testing factor effectiveness without confounding effects
+
+#### 2. Factor-Based Weighting (`weight_method="factor"`)
+
+Weights are proportional to factor values:
+
+$$w_i = \frac{F_i}{\sum_{j=1}^{N} F_j}$$
+
+where $F_i$ is the factor value for asset $i$. If factor values are negative, they are shifted to ensure positivity:
+
+$$F'_i = F_i - \min(F) + \epsilon$$
+
+where $\epsilon$ is a small constant (1e-6) to avoid zero weights.
+
+**Characteristics:**
+- Directly uses factor information
+- Higher factor values receive higher weights
+- Suitable when factor values represent investment signals
+
+#### 3. Inverse Volatility Weighting (`weight_method="inv_vol"`)
+
+Weights are inversely proportional to historical volatility:
+
+$$w_i = \frac{1/\sigma_i}{\sum_{j=1}^{N} 1/\sigma_j}$$
+
+where $\sigma_i$ is the historical volatility of asset $i$, calculated using a rolling window:
+
+$$\sigma_i = \sqrt{\frac{1}{W-1}\sum_{t=T-W+1}^{T} (r_{i,t} - \bar{r}_i)^2}$$
+
+where:
+- $W$ is the window size (20 trading days)
+- $r_{i,t}$ is the return of asset $i$ at time $t$
+- $\bar{r}_i$ is the mean return of asset $i$ over the window
+
+**Characteristics:**
+- Risk-aware weighting
+- Lower volatility assets receive higher weights
+- Suitable for risk-averse strategies
+
+#### 4. Mean-Variance Optimization (`weight_method="mean_var"`)
+
+Markowitz optimal portfolio maximizing Sharpe ratio:
+
+$$w^* = \frac{\Sigma^{-1}\mu}{1^T\Sigma^{-1}\mu}$$
+
+where:
+- $\Sigma$ is the covariance matrix of returns
+- $\mu$ is the vector of expected returns
+- $1$ is a vector of ones
+- $\Sigma^{-1}$ is the inverse of the covariance matrix
+
+The covariance matrix is estimated using historical returns (60-day window):
+
+$$\Sigma_{i,j} = \frac{1}{T-1}\sum_{t=1}^{T} (r_{i,t} - \bar{r}_i)(r_{j,t} - \bar{r}_j)$$
+
+For numerical stability, a small regularization term is added:
+
+$$\Sigma' = \Sigma + \epsilon I$$
+
+where $I$ is the identity matrix and $\epsilon = 1e-8$.
+
+**Constraints:**
+- Long-only: $w_i \geq 0$ for all $i$
+- Full investment: $\sum_{i=1}^{N} w_i = 1$
+
+**Characteristics:**
+- Theoretically optimal for risk-return trade-off
+- Maximizes Sharpe ratio
+- Requires sufficient historical data (60+ days)
+
+#### 5. Market Capitalization Weighting (`weight_method="market_cap"`)
+
+Weights are proportional to market capitalization:
+
+$$w_i = \frac{MC_i}{\sum_{j=1}^{N} MC_j}$$
+
+where $MC_i$ is the market capitalization of asset $i$ at the rebalance date.
+
+**Characteristics:**
+- Mimics market index composition
+- Larger companies receive higher weights
+- Requires external market cap data
+
+### Transaction Fee Calculation
+
+Transaction fees are applied based on portfolio turnover at each rebalancing:
+
+$$\text{Turnover}_t = \frac{1}{2}\sum_{i=1}^{N} |w_{i,t} - w_{i,t-1}|$$
+
+$$\text{Fee}_t = V_t \times f \times \text{Turnover}_t$$
+
+where:
+- $w_{i,t}$ is the weight of asset $i$ at time $t$
+- $V_t$ is the portfolio value at time $t$
+- $f$ is the transaction fee rate (e.g., 0.0003 for 0.03%)
+
+The portfolio value after fees:
+
+$$V'_t = V_t - \text{Fee}_t$$
+
+This approach properly reflects actual trading costs rather than assuming 100% turnover.
+
 ## Output
 
 ### Directory Structure
@@ -492,7 +614,7 @@ The `backtest_metrics.json` file contains:
 ```python
 import pandas as pd
 import numpy as np
-from _backtest import BackTest
+from flash_bt.bt._backtest import BackTest
 
 # Generate synthetic momentum factor (12-month return)
 np.random.seed(42)
@@ -513,6 +635,7 @@ factor_df = price_df.pct_change(252)
 backtest = BackTest(
     factor_df=factor_df,
     price_df=price_df,
+    fee=0.0003,
     rebalance_period=21,  # Monthly rebalancing
     n_groups=5,
     weight_method='equal',
@@ -527,7 +650,7 @@ print(f"Rank IC: {backtest.rank_ic:.4f}")
 
 ```python
 import pandas as pd
-from _backtest import BackTest
+from flash_bt.bt._backtest import BackTest
 
 # Load value factor data (e.g., P/E ratio)
 price_df = pd.read_csv('stock_prices.csv', index_col='date')
@@ -541,6 +664,7 @@ factor_df.index = pd.to_datetime(factor_df.index)
 backtest = BackTest(
     factor_df=factor_df,
     price_df=price_df,
+    fee=0.0003,
     rebalance_period=63,  # Quarterly rebalancing
     n_groups=10,          # Decile analysis
     weight_method='equal',
@@ -563,12 +687,13 @@ print(backtest.avg_group_ret)
 ### Example 3: Manual Backtest Execution
 
 ```python
-from _backtest import BackTest
+from flash_bt.bt._backtest import BackTest
 
 # Initialize without auto-running
 backtest = BackTest(
     factor_df=factor_df,
     price_df=price_df,
+    fee=0.0003,
     rebalance_period=20,
     n_groups=5,
     auto_run=False
@@ -590,7 +715,7 @@ for key, value in metrics.items():
 ### Example 4: Comparing Multiple Factors
 
 ```python
-from _backtest import BackTest
+from flash_bt.bt._backtest import BackTest
 
 factors = {
     'momentum': momentum_df,
@@ -604,6 +729,7 @@ for factor_name, factor_df in factors.items():
     backtest = BackTest(
         factor_df=factor_df,
         price_df=price_df,
+        fee=0.0003,
         rebalance_period=21,
         n_groups=5,
         auto_run=True
@@ -624,13 +750,14 @@ print(results_df)
 ### Example 5: Custom Visualization
 
 ```python
-from _backtest import BackTest
+from flash_bt.bt._backtest import BackTest
 import matplotlib.pyplot as plt
 
 # Run backtest
 backtest = BackTest(
     factor_df=factor_df,
     price_df=price_df,
+    fee=0.0003,
     rebalance_period=20,
     n_groups=5,
     auto_run=True
@@ -649,6 +776,65 @@ print(f"Std Rank IC: {rank_ic_series.std():.4f}")
 print(f"ICIR (IC/Std): {rank_ic_series.mean() / rank_ic_series.std():.4f}")
 ```
 
+### Example 6: Comparing Different Weighting Methods
+
+```python
+import pandas as pd
+from flash_bt.bt._backtest import BackTest
+
+# Load data
+price_df = pd.read_csv('stock_prices.csv', index_col='date')
+factor_df = pd.read_csv('factor_data.csv', index_col='date')
+market_cap_df = pd.read_csv('market_cap_data.csv', index_col='date')
+
+# Convert index to datetime
+price_df.index = pd.to_datetime(price_df.index)
+factor_df.index = pd.to_datetime(factor_df.index)
+market_cap_df.index = pd.to_datetime(market_cap_df.index)
+
+# Test different weighting methods
+weight_methods = ['equal', 'factor', 'inv_vol', 'mean_var', 'market_cap']
+results = {}
+
+for method in weight_methods:
+    if method == 'market_cap':
+        # Market cap weighting requires market_cap_df
+        backtest = BackTest(
+            factor_df=factor_df,
+            price_df=price_df,
+            market_cap_df=market_cap_df,
+            fee=0.0003,
+            rebalance_period=20,
+            n_groups=5,
+            weight_method=method,
+            auto_run=True
+        )
+    else:
+        # Other methods don't require market_cap_df
+        backtest = BackTest(
+            factor_df=factor_df,
+            price_df=price_df,
+            fee=0.0003,
+            rebalance_period=20,
+            n_groups=5,
+            weight_method=method,
+            auto_run=True
+        )
+    
+    results[method] = {
+        'sharpe': backtest.sharpe_ratio,
+        'sortino': backtest.sortino_ratio,
+        'calmar': backtest.calmar_ratio,
+        'max_dd': backtest.max_drawdown,
+        'win_rate': backtest.win_rate
+    }
+
+# Compare results
+results_df = pd.DataFrame(results).T
+print("Weighting Method Comparison:")
+print(results_df)
+```
+
 ## Limitations and Assumptions
 
 ### Data Requirements
@@ -663,13 +849,13 @@ print(f"ICIR (IC/Std): {rank_ic_series.mean() / rank_ic_series.std():.4f}")
 
 ### Methodological Assumptions
 
-1. **Equal Weighting**: The current implementation only supports equal-weighted portfolios within groups. Market-cap and other weighting methods are not yet implemented.
+1. **Multiple Weighting Methods**: The framework supports five weighting schemes: equal, factor-based, inverse volatility, mean-variance optimization, and market capitalization. See [Weighting Methods](#weighting-methods) for details.
 
-2. **No Transaction Costs**: The framework does not account for transaction costs, slippage, or market impact.
+2. **Transaction Costs**: The framework accounts for transaction costs based on portfolio turnover. Fees are applied at each rebalancing: fee_amount = portfolio_value × fee × turnover, where turnover = Σ|weight_change| / 2. This properly reflects actual trading costs rather than assuming 100% turnover.
 
 3. **No Liquidity Constraints**: The framework assumes infinite liquidity and does not consider trading volume or position limits.
 
-4. **Perfect Execution**: Assumes trades are executed at the specified prices without delay or execution risk.
+4. **Perfect Execution**: Assumes trades are executed at specified prices without delay or execution risk.
 
 5. **Daily Rebalancing Within Period**: While portfolios are rebalanced every `rebalance_period` days, daily returns are calculated assuming constant weights within each period.
 

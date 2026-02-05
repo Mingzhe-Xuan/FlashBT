@@ -14,6 +14,7 @@ class BackTest:
         rebalance_period: int,
         n_groups: int,
         weight_method: str = "equal",
+        market_cap_df: pd.DataFrame = None,
         need_preprocess: bool = True,
         need_normalize: bool = True,
         price_threshold: float = 1e6,
@@ -23,6 +24,7 @@ class BackTest:
         figures_path: str = None,
         cumprod: bool = True,
         auto_run: bool = False,
+        look_back: int = 60,
     ):
         r"""
         Back-test engine for factor-based strategies.
@@ -35,18 +37,22 @@ class BackTest:
             Close prices for each asset at each time point. Note that the dataframe must have the same columns as factor_df and has datetime as index.
         fee : float
             Transaction fee per trade (as a fraction of the trade amount). Default is 0.0003.
-            Fee is applied based on portfolio turnover at each rebalancing: fee_amount = portfolio_value × fee × turnover,
+            Fee is applied based on portfolio turnover at each rebalancing: fee_amount = portfolio_value * fee * turnover,
             where turnover = Σ|weight_change| / 2.
         rebalance_period : int
             Rebalancing frequency (number of periods between portfolio shifts). Day as the unit.
         n_groups : int
             Number of quantile groups into which assets are partitioned.
         weight_method : str
-            Weighting scheme applied within each group. Options: "equal", "factor", "inv_vol", "mean_var". Default is "equal".
+            Weighting scheme applied within each group. Options: "equal", "factor", "inv_vol", "mean_var", "market_cap". Default is "equal".
             - "equal": Equal weighting across all assets.
             - "factor": Weight assets proportionally to their factor values (linear factor weighting).
             - "inv_vol": Weight assets inversely proportional to their historical volatility.
             - "mean_var": Mean-variance optimization (Markowitz portfolio) maximizing Sharpe ratio.
+            - "market_cap": Weight assets proportionally to their market capitalization (requires market_cap_df).
+        market_cap_df : pd.DataFrame, optional
+            Market capitalization data for each asset at each time point. Required if weight_method="market_cap".
+            Note that dataframe must have same columns as price_df and has datetime as index.
         need_preprocess : bool
             Whether to preprocess data before back-testing. Default is True.
         need_normalize : bool
@@ -65,6 +71,10 @@ class BackTest:
             Whether to compute cumulative product of daily returns. Default is True.
         auto_run : bool
             Whether automatically run the backtest as soon as the instance is created. Default is False.
+        look_back : int
+            Look-back period (in days) for calculating historical statistics used in weighting methods.
+            Used in mean-variance optimization (60 days by default) and inverse volatility weighting (20 days).
+            Default is 60.
 
         Attributes
         ----------
@@ -114,6 +124,7 @@ class BackTest:
         """
         self.factor_df = factor_df
         self.price_df = price_df
+        self.market_cap_df = market_cap_df
         self.fee = fee
         self.rebalance_period = rebalance_period
         self.n_groups = n_groups
@@ -126,6 +137,22 @@ class BackTest:
         self.figures_path = figures_path
         self.cumprod = cumprod
         self.auto_run = auto_run
+        self.look_back = look_back
+
+        self.daily_ret = None
+        self.cum_ret = None
+        self.portfolio_daily_ret = None
+        self.portfolio_cum_ret = None
+        self.sharpe_ratio = None
+        self.sortino_ratio = None
+        self.calmar_ratio = None
+        self.max_drawdown = None
+        self.win_rate = None
+        self.ic = None
+        self.rank_ic = None
+        self.avg_group_ret = None
+        self.avg_group_daily_ret = None
+        self.avg_group_cum_ret = None
 
         assert isinstance(
             self.factor_df, pd.DataFrame
@@ -141,11 +168,18 @@ class BackTest:
             "equal",
             "factor",
             "inv_vol",
-            "mean_var"
+            "mean_var",
+            "market_cap"
         ]  # Add new methods to this list as they are implemented
         if weight_method not in supported_methods:
             raise ValueError(
                 f"Invalid weight_method '{weight_method}'. Supported methods: {supported_methods}"
+            )
+
+        # Validate market_cap_df if market_cap weighting is requested
+        if weight_method == "market_cap" and market_cap_df is None:
+            raise ValueError(
+                "market_cap_df must be provided when weight_method='market_cap'"
             )
 
         # Verify that we have at least one stock price column
@@ -422,6 +456,34 @@ class BackTest:
                                 current_weights = pd.Series(1.0 / len(current_assets), index=current_assets)
                         else:
                             # Not enough historical data, fallback to equal weighting
+                            current_weights = pd.Series(1.0 / len(current_assets), index=current_assets)
+                    
+                    elif self.weight_method == "market_cap":
+                        # Market capitalization weighting
+                        if self.market_cap_df is not None and date in self.market_cap_df.index:
+                            market_caps_at_date = self.market_cap_df.loc[date]
+                            # Get market caps for current assets only
+                            current_market_caps = market_caps_at_date[current_assets].dropna()
+                            valid_assets = current_market_caps.index.tolist()
+                            
+                            if len(valid_assets) > 0:
+                                # Calculate weights proportional to market cap
+                                market_cap_values = current_market_caps.values
+                                
+                                # Ensure all market caps are positive
+                                market_cap_values = np.maximum(market_cap_values, 0)
+                                
+                                # Normalize to sum to 1
+                                if market_cap_values.sum() > 0:
+                                    current_weights = pd.Series(market_cap_values / market_cap_values.sum(), index=valid_assets)
+                                else:
+                                    # Fallback to equal weighting
+                                    current_weights = pd.Series(1.0 / len(valid_assets), index=valid_assets)
+                            else:
+                                # Fallback to equal weighting
+                                current_weights = pd.Series(1.0 / len(current_assets), index=current_assets)
+                        else:
+                            # Fallback to equal weighting if market cap data not available
                             current_weights = pd.Series(1.0 / len(current_assets), index=current_assets)
                     
                     else:
@@ -1579,10 +1641,12 @@ if __name__ == "__main__":
     if os.path.exists("example_price.csv") and os.path.exists("example_factors.csv"):
         price_df = pd.read_csv("example_price.csv", index_col=0)
         factor_df = pd.read_csv("example_factors.csv", index_col=0)
+        market_cap_df = pd.read_csv("example_market_cap.csv", index_col=0)
 
         # Convert index to datetime
         price_df.index = pd.to_datetime(price_df.index)
         factor_df.index = pd.to_datetime(factor_df.index)
+        market_cap_df.index = pd.to_datetime(market_cap_df.index)
 
         bt = BackTest(
             factor_df=factor_df,
@@ -1590,7 +1654,8 @@ if __name__ == "__main__":
             fee=3 * 1e-4,
             rebalance_period=5,
             n_groups=5,
-            weight_method="mean_var",
+            weight_method="market_cap",
+            market_cap_df=market_cap_df,
             need_plot=True,
             need_preprocess=True,
         )
