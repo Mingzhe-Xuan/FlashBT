@@ -42,7 +42,10 @@ class BackTest:
         n_groups : int
             Number of quantile groups into which assets are partitioned.
         weight_method : str
-            Weighting scheme applied within each group. Options: "equal". Default is "equal".
+            Weighting scheme applied within each group. Options: "equal", "factor", "inv_vol". Default is "equal".
+            - "equal": Equal weighting across all assets.
+            - "factor": Weight assets proportionally to their factor values (linear factor weighting).
+            - "inv_vol": Weight assets inversely proportional to their historical volatility.
         need_preprocess : bool
             Whether to preprocess data before back-testing. Default is True.
         need_normalize : bool
@@ -134,7 +137,9 @@ class BackTest:
         # Allow for extensibility - only validate currently supported methods
         # Future weight methods can be added here as they are implemented
         supported_methods = [
-            "equal"
+            "equal",
+            "factor",
+            "inv_vol"
         ]  # Add new methods to this list as they are implemented
         if weight_method not in supported_methods:
             raise ValueError(
@@ -145,17 +150,6 @@ class BackTest:
         assert (
             len(self.price_df.columns) > 0
         ), "At least one stock price column must be provided in price_df."
-
-        # Restrict weight_method to only "equal" since market_cap functionality has been removed
-        # Allow for extensibility - only validate currently supported methods
-        # Future weight methods can be added here as they are implemented
-        supported_methods = [
-            "equal"
-        ]  # Add new methods to this list as they are implemented
-        if weight_method not in supported_methods:
-            raise ValueError(
-                f"Invalid weight_method '{weight_method}'. Supported methods: {supported_methods}"
-            )
 
         if need_preprocess:
             self.preprocess(self.price_df, self.factor_df)
@@ -292,31 +286,10 @@ class BackTest:
         else:
             cum_ret_df = daily_ret_df.cumsum()
 
-        # Calculate portfolio-level metrics considering weight_method
-        # Extensible design - add new weight methods in elif clauses
-        if self.weight_method == "equal":
-            # Equal weighting - average across assets
-            avg_daily_returns = daily_ret_df.mean(
-                axis=1
-            )  # Average return across assets per day
-            avg_cum_ret = (
-                cum_ret_df.mean(axis=1) if cumprod else cum_ret_df.mean(axis=1)
-            )
-        # Future weight methods can be added here:
-        # elif self.weight_method == "new_method":
-        #     # Implementation for new weighting method
-        #     ...
-        else:
-            # Default to equal weighting for any unrecognized method
-            avg_daily_returns = daily_ret_df.mean(axis=1)
-            avg_cum_ret = (
-                cum_ret_df.mean(axis=1) if cumprod else cum_ret_df.mean(axis=1)
-            )
-
         # Apply transaction fees based on turnover at rebalancing points
         # Track portfolio value and apply fees at rebalancing
         portfolio_value = 1.0  # Start with initial portfolio value of 1
-        portfolio_daily_values = pd.Series(index=avg_daily_returns.index, dtype=float)
+        portfolio_daily_values = pd.Series(index=daily_ret_df.index, dtype=float)
         portfolio_daily_values.iloc[0] = portfolio_value
         
         # Track previous weights to calculate turnover
@@ -325,17 +298,73 @@ class BackTest:
         
         rebalance_dates = factor_df.index[:: self.rebalance_period]
         
-        for i, date in enumerate(avg_daily_returns.index):
+        # Precompute volatility for inv_vol method
+        if self.weight_method == "inv_vol":
+            # Calculate historical volatility for each asset
+            # Use rolling window of 20 trading days (approximately 1 month)
+            volatility_df = daily_ret_df.rolling(window=20, min_periods=10).std()
+        
+        for i, date in enumerate(daily_ret_df.index):
             # Check if this is a rebalancing day
             is_rebalance = date in rebalance_dates
             
             if is_rebalance and i > 0:
-                # Calculate current weights (equal weighting across available assets)
                 # Get assets that have valid returns on this date
                 current_assets = daily_ret_df.columns[daily_ret_df.loc[date].notna()].tolist()
                 
                 if len(current_assets) > 0:
-                    current_weights = pd.Series(1.0 / len(current_assets), index=current_assets)
+                    # Calculate weights based on weight_method
+                    if self.weight_method == "equal":
+                        # Equal weighting across available assets
+                        current_weights = pd.Series(1.0 / len(current_assets), index=current_assets)
+                    
+                    elif self.weight_method == "factor":
+                        # Factor-based weighting: weight proportional to factor values
+                        if date in factor_df.index:
+                            factors_at_date = factor_df.loc[date]
+                            # Get factors for current assets only
+                            current_factors = factors_at_date[current_assets].dropna()
+                            valid_assets = current_factors.index.tolist()
+                            
+                            if len(valid_assets) > 0:
+                                # Shift factors to be positive if needed
+                                factor_values = current_factors.values
+                                if np.any(factor_values < 0):
+                                    factor_values = factor_values - factor_values.min() + 1e-6
+                                
+                                # Normalize to sum to 1
+                                current_weights = pd.Series(factor_values / factor_values.sum(), index=valid_assets)
+                            else:
+                                # Fallback to equal weighting
+                                current_weights = pd.Series(1.0 / len(current_assets), index=current_assets)
+                        else:
+                            # Fallback to equal weighting if factor data not available
+                            current_weights = pd.Series(1.0 / len(current_assets), index=current_assets)
+                    
+                    elif self.weight_method == "inv_vol":
+                        # Inverse volatility weighting
+                        if date in volatility_df.index:
+                            vols_at_date = volatility_df.loc[date]
+                            # Get volatilities for current assets only
+                            current_vols = vols_at_date[current_assets].dropna()
+                            valid_assets = current_vols.index.tolist()
+                            
+                            if len(valid_assets) > 0:
+                                # Calculate inverse volatilities
+                                inv_vols = 1.0 / (current_vols.values + 1e-6)  # Add small constant to avoid division by zero
+                                
+                                # Normalize to sum to 1
+                                current_weights = pd.Series(inv_vols / inv_vols.sum(), index=valid_assets)
+                            else:
+                                # Fallback to equal weighting
+                                current_weights = pd.Series(1.0 / len(current_assets), index=current_assets)
+                        else:
+                            # Fallback to equal weighting if volatility data not available
+                            current_weights = pd.Series(1.0 / len(current_assets), index=current_assets)
+                    
+                    else:
+                        # Default to equal weighting for any unrecognized method
+                        current_weights = pd.Series(1.0 / len(current_assets), index=current_assets)
                     
                     # Calculate turnover if we have previous weights
                     if prev_weights is not None and prev_assets is not None:
@@ -364,9 +393,19 @@ class BackTest:
                     prev_weights = current_weights
                     prev_assets = current_assets
             
-            # Apply daily return
+            # Apply daily return using current weights
             if i > 0:
-                portfolio_value *= (1 + avg_daily_returns.iloc[i])
+                # Calculate weighted return for this day
+                if prev_weights is not None and len(prev_weights) > 0:
+                    # Get returns for assets in current portfolio
+                    returns_at_date = daily_ret_df.loc[date]
+                    weighted_return = 0.0
+                    
+                    for asset, weight in prev_weights.items():
+                        if asset in returns_at_date.index and pd.notna(returns_at_date[asset]):
+                            weighted_return += weight * returns_at_date[asset]
+                    
+                    portfolio_value *= (1 + weighted_return)
             
             portfolio_daily_values.iloc[i] = portfolio_value
         
@@ -379,7 +418,7 @@ class BackTest:
         else:
             portfolio_cum_ret = portfolio_daily_values - portfolio_daily_values.iloc[0]
         
-        # Update avg_daily_returns and avg_cum_ret to use fee-adjusted returns
+        # Set avg_daily_returns and avg_cum_ret to use fee-adjusted returns
         avg_daily_returns = portfolio_daily_ret
         avg_cum_ret = portfolio_cum_ret
 
@@ -1489,7 +1528,7 @@ if __name__ == "__main__":
             fee=3 * 1e-4,
             rebalance_period=5,
             n_groups=5,
-            weight_method="equal",
+            weight_method="inv_vol",
             need_plot=True,
             need_preprocess=True,
         )
