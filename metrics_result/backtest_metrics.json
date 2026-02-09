@@ -1,13 +1,13 @@
 {
     "overall": {
-        "sharpe_ratio": 0.24378944338467762,
-        "sortino_ratio": 0.3008820122490304,
-        "calmar_ratio": 0.03750801576968184,
-        "max_drawdown": -0.489314571483241,
+        "sharpe_ratio": 0.24378944338467773,
+        "sortino_ratio": 0.3008820122490305,
+        "calmar_ratio": 0.03750801576968185,
+        "max_drawdown": -0.48931457148324076,
         "win_rate": 0.5081101471142965,
         "rank_ic": 0.029232677615491337,
-        "annual_return": 0.029435010153123553,
-        "cumulative_return": 0.3568717081996744
+        "annual_return": 0.029435010153123775,
+        "cumulative_return": 0.35687170819967506
     },
     "groups": {
         "group_0": {

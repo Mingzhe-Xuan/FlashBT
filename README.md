@@ -164,6 +164,8 @@ factor_df = pd.DataFrame(
 
 #### Step 2: Initialize Backtest
 
+For equal, factor, inv_vol, or mean_var weighting methods:
+
 ```python
 backtest = Backtest(
     factor_df=factor_df,
@@ -171,6 +173,34 @@ backtest = Backtest(
     rebalance_period=20,
     n_groups=5,
     weight_method='equal',
+    need_preprocess=True,
+    need_normalize=True,
+    price_threshold=1e6,
+    factor_threshold=10,
+    need_plot=True,
+    metrics_path='./custom_metrics',
+    figures_path='./custom_figures',
+    cumprod=True,
+    auto_run=False  # Run manually
+)
+```
+
+For market_cap weighting method (requires market_cap_df):
+
+```python
+# Prepare market cap data
+market_cap_df = pd.DataFrame(
+    index=pd.date_range('2020-01-01', periods=252, freq='D'),
+    columns=['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']
+)
+
+backtest = Backtest(
+    factor_df=factor_df,
+    price_df=price_df,
+    market_cap_df=market_cap_df,  # Required for market_cap weighting
+    rebalance_period=20,
+    n_groups=5,
+    weight_method='market_cap',  # Use market cap weighting
     need_preprocess=True,
     need_normalize=True,
     price_threshold=1e6,
@@ -256,13 +286,14 @@ backtest.plot_avg_group_ret()
 
 ### Method Parameters
 
-#### `preprocess(price_df, factor_df)`
+#### `preprocess(price_df, factor_df, market_cap_df=None)`
 
 Preprocesses data for backtesting.
 
 **Parameters:**
 - `price_df` (pd.DataFrame): Close prices for each asset
 - `factor_df` (pd.DataFrame): Factor values for each asset
+- `market_cap_df` (pd.DataFrame, optional): Market capitalization data for each asset. Required if using `weight_method="market_cap"`
 
 **Preprocessing Steps:**
 1. Remove missing values (NaNs)
@@ -270,7 +301,8 @@ Preprocesses data for backtesting.
    - Negative or zero prices
    - Prices exceeding `price_threshold`
    - Factor values outside `factor_threshold` standard deviations from mean
-3. Align factor and price DataFrames by time index
+   - Negative or zero market capitalization values (if `market_cap_df` provided)
+3. Align factor, price, and market cap DataFrames by time index (if `market_cap_df` provided)
 4. Normalize factor values if `need_normalize=True`
 
 #### `compute_metrics(price_df, factor_df, cumprod=True)`
@@ -1085,13 +1117,13 @@ The framework implements several safeguards to prevent forward-looking bias:
 - Adjust thresholds: Increase `price_threshold` or `factor_threshold`
 - Disable normalization: Set `need_normalize=False`
 
-#### 2. ValueError: "No overlapping time index between valid factor and price data."
+#### 2. ValueError: "No overlapping time index between valid factor and price data." or "No overlapping time index between valid factor, price, and market cap data."
 
-**Cause**: Factor and price data have no common dates.
+**Cause**: Factor and price data (and market cap data if provided) have no common dates.
 
 **Solution**:
-- Check time ranges: `print(factor_df.index[0], price_df.index[0])`
-- Ensure both have DatetimeIndex: `factor_df.index = pd.to_datetime(factor_df.index)`
+- Check time ranges: `print(factor_df.index[0], price_df.index[0])`, and `print(market_cap_df.index[0])` if provided
+- Ensure all have DatetimeIndex: `factor_df.index = pd.to_datetime(factor_df.index)`, `price_df.index = pd.to_datetime(price_df.index)`, and `market_cap_df.index = pd.to_datetime(market_cap_df.index)` if provided
 - Verify date formats are consistent
 
 #### 3. AssertionError: "factor_df must have the same columns as price_df."

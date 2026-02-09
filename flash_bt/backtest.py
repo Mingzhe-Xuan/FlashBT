@@ -182,23 +182,40 @@ class Backtest:
                 "market_cap_df must be provided when weight_method='market_cap'"
             )
 
+        assets_price = self.price_df.columns.tolist()
+        assets_factor = self.factor_df.columns.tolist()
+        assets_common = list(set(assets_price) & set(assets_factor))
+        if self.market_cap_df is not None:
+            assets_market_cap = self.market_cap_df.columns.tolist()
+            assets_common = list(set(assets_common) & set(assets_market_cap))
+
         # Verify that we have at least one stock price column
         assert (
-            len(self.price_df.columns) > 0
-        ), "At least one stock price column must be provided in price_df."
+            len(assets_common) > 0
+        ), "At least one common asset column between price_df, factor_df (and market_cap_df if it is not None) must be provided."
+
+        self.price_df = self.price_df[assets_common]
+        self.factor_df = self.factor_df[assets_common]
+        if self.market_cap_df is not None:
+            self.market_cap_df = self.market_cap_df[assets_common]
 
         if need_preprocess:
-            self.preprocess(self.price_df, self.factor_df)
+            self.preprocess(self.price_df, self.factor_df, self.market_cap_df)
         else:
             self.time_index = self.factor_df.index.intersection(self.price_df.index)
             self.price_df = self.price_df.loc[self.time_index]
             self.factor_df = self.factor_df.loc[self.time_index]
+            if self.market_cap_df is not None:
+                self.time_index = self.time_index.intersection(self.market_cap_df.index)
+                self.price_df = self.price_df.loc[self.time_index]
+                self.factor_df = self.factor_df.loc[self.time_index]
+                self.market_cap_df = self.market_cap_df.loc[self.time_index]
 
         # Set stocks after preprocessing to ensure both dataframes have the same columns
-        self.stocks = self.factor_df.columns.tolist()
-        assert (
-            self.stocks == self.price_df.columns.to_list()
-        ), "factor_df must have the same columns as price_df."
+        # self.stocks = self.factor_df.columns.tolist()
+        # assert (
+        #     self.stocks == self.price_df.columns.to_list()
+        # ), "factor_df must have the same columns as price_df."        
 
         # Automatically run the backtest after initialization
         if self.auto_run:
@@ -208,6 +225,7 @@ class Backtest:
         self,
         price_df: pd.DataFrame,
         factor_df: pd.DataFrame,
+        market_cap_df: pd.DataFrame = None,
     ):
         r"""
         Preprocess data for back-testing. The preprocessing steps include:
@@ -222,6 +240,8 @@ class Backtest:
             Close prices for each asset at each time point.
         factor_df : pd.DataFrame
             Factor values for each asset at each time point.
+        market_cap_df : pd.DataFrame, optional
+            Market capitalization data for each asset at each time point.
 
         Notes
         -----
@@ -236,11 +256,20 @@ class Backtest:
 
         factor_df = factor_df.dropna()
         price_df = price_df.dropna()
+        
+        # Process market_cap_df if provided
+        if market_cap_df is not None:
+            market_cap_df = market_cap_df.dropna()
 
-        if len(factor_df) == 0 or len(price_df) == 0:
+        if len(factor_df) == 0 or len(price_df) == 0 or (market_cap_df is not None and len(market_cap_df) == 0):
             raise ValueError("No valid data after removing nans.")
 
         price_df = price_df[(price_df > 0) & (price_df < self.price_threshold)]
+        
+        # Apply market cap filtering (positive values only)
+        if market_cap_df is not None:
+            market_cap_df = market_cap_df[(market_cap_df > 0)]
+
         factor_mean = factor_df.mean()
         factor_std = factor_df.std()
         factor_df = factor_df[
@@ -248,21 +277,34 @@ class Backtest:
             & (factor_df < factor_mean + self.factor_threshold * factor_std)
         ]
 
-        if len(factor_df) == 0 or len(price_df) == 0:
+        if len(factor_df) == 0 or len(price_df) == 0 or (market_cap_df is not None and len(market_cap_df) == 0):
             raise ValueError("No valid data after removing nans and outliers.")
 
         if not isinstance(factor_df.index, pd.DatetimeIndex):
             factor_df.index = pd.to_datetime(factor_df.index)
         if not isinstance(price_df.index, pd.DatetimeIndex):
             price_df.index = pd.to_datetime(price_df.index)
+        if market_cap_df is not None and not isinstance(market_cap_df.index, pd.DatetimeIndex):
+            market_cap_df.index = pd.to_datetime(market_cap_df.index)
 
-        time_index = factor_df.index.intersection(price_df.index)
-        if len(time_index) == 0:
-            raise ValueError(
-                "No overlapping time index between valid factor and price data."
-            )
-        factor_df = factor_df.loc[time_index]
-        price_df = price_df.loc[time_index]
+        # Find intersection of all three dataframes' indices if market_cap_df is provided
+        if market_cap_df is not None:
+            time_index = factor_df.index.intersection(price_df.index).intersection(market_cap_df.index)
+            if len(time_index) == 0:
+                raise ValueError(
+                    "No overlapping time index between valid factor, price, and market cap data."
+                )
+            factor_df = factor_df.loc[time_index]
+            price_df = price_df.loc[time_index]
+            market_cap_df = market_cap_df.loc[time_index]
+        else:
+            time_index = factor_df.index.intersection(price_df.index)
+            if len(time_index) == 0:
+                raise ValueError(
+                    "No overlapping time index between valid factor and price data."
+                )
+            factor_df = factor_df.loc[time_index]
+            price_df = price_df.loc[time_index]
 
         if self.need_normalize:
             factor_df = factor_df.apply(lambda x: (x - x.mean(axis=0)) / x.std(axis=0))
@@ -270,6 +312,8 @@ class Backtest:
         self.time_index = time_index
         self.factor_df = factor_df
         self.price_df = price_df
+        if market_cap_df is not None:
+            self.market_cap_df = market_cap_df
 
     def compute_metrics(
         self,
