@@ -36,7 +36,7 @@ class Backtest:
         price_df : pd.DataFrame
             Close prices for each asset at each time point. Note that the dataframe must have the same columns as factor_df and has datetime as index.
         fee : float
-            Transaction fee per trade (as a fraction of the trade amount). Default is 0.0003.
+            Transaction fee per trade (as a fraction of the trade amount).
             Fee is applied based on portfolio turnover at each rebalancing: fee_amount = portfolio_value * fee * turnover,
             where turnover = Σ|weight_change| / 2.
         rebalance_period : int
