@@ -1,64 +1,64 @@
 {
     "overall": {
-        "sharpe_ratio": 0.24378944338467773,
-        "sortino_ratio": 0.3008820122490305,
-        "calmar_ratio": 0.03750801576968185,
-        "max_drawdown": -0.48931457148324076,
-        "win_rate": 0.5081101471142965,
-        "rank_ic": 0.029232677615491337,
-        "annual_return": 0.029435010153123775,
-        "cumulative_return": 0.35687170819967506
+        "sharpe_ratio": 0.25465147164131624,
+        "sortino_ratio": 0.31442769854446145,
+        "calmar_ratio": 0.03919662391007046,
+        "max_drawdown": -0.48931457148323965,
+        "win_rate": 0.5082956259426847,
+        "rank_ic": 0.030125882969100844,
+        "annual_return": 0.03179241829128321,
+        "cumulative_return": 0.39009063089194695
     },
     "groups": {
         "group_0": {
-            "annual_return": 0.0006683531646793917,
-            "cumulative_return": 0.007050709386207332,
-            "sharpe_ratio": 0.11503739354474285,
-            "sortino_ratio": 0.13765353042595638,
-            "calmar_ratio": 0.01686199970080202,
-            "max_drawdown": -0.6131088368950094,
-            "win_rate": 0.5139622641509434,
-            "rank_ic": 0.029232677615491337
+            "annual_return": 0.011052668946760269,
+            "cumulative_return": 0.12258544605478683,
+            "sharpe_ratio": 0.16185817350829343,
+            "sortino_ratio": 0.19251625809161543,
+            "calmar_ratio": 0.023839916288007423,
+            "max_drawdown": -0.6377163142918645,
+            "win_rate": 0.5160316861561675,
+            "rank_ic": 0.030125882969100844
         },
         "group_1": {
-            "annual_return": 0.021570459487701754,
-            "cumulative_return": 0.2515970757015289,
-            "sharpe_ratio": 0.20729567866502838,
-            "sortino_ratio": 0.25471749117835574,
-            "calmar_ratio": 0.029551059198521457,
-            "max_drawdown": -0.5445002909006191,
-            "win_rate": 0.5226415094339623,
-            "rank_ic": 0.029232677615491337
+            "annual_return": 0.01846629900461494,
+            "cumulative_return": 0.21226518039661402,
+            "sharpe_ratio": 0.19282686847264904,
+            "sortino_ratio": 0.23962925216103695,
+            "calmar_ratio": 0.027400952961716695,
+            "max_drawdown": -0.48437514684406213,
+            "win_rate": 0.5179177668804225,
+            "rank_ic": 0.030125882969100844
         },
         "group_2": {
-            "annual_return": 0.02673615926000239,
-            "cumulative_return": 0.3197749668516421,
-            "sharpe_ratio": 0.23078847803043687,
-            "sortino_ratio": 0.28284329177198325,
-            "calmar_ratio": 0.03617046501787841,
-            "max_drawdown": -0.5111326779870868,
-            "win_rate": 0.52,
-            "rank_ic": 0.029232677615491337
+            "annual_return": 0.024468599415333525,
+            "cumulative_return": 0.2895677033069317,
+            "sharpe_ratio": 0.22069144611107833,
+            "sortino_ratio": 0.26988301502754297,
+            "calmar_ratio": 0.034361256587561645,
+            "max_drawdown": -0.5472756847798492,
+            "win_rate": 0.5205582798943795,
+            "rank_ic": 0.030125882969100844
         },
         "group_3": {
-            "annual_return": 0.02949032031075327,
-            "cumulative_return": 0.3574822600568852,
-            "sharpe_ratio": 0.2430785537465271,
-            "sortino_ratio": 0.3078385454771449,
-            "calmar_ratio": 0.03870479647630659,
-            "max_drawdown": -0.49696435510879367,
-            "win_rate": 0.5154716981132076,
-            "rank_ic": 0.029232677615491337
+            "annual_return": 0.03765388638231992,
+            "cumulative_return": 0.4752646321817917,
+            "sharpe_ratio": 0.2791852614509229,
+            "sortino_ratio": 0.351012068938282,
+            "calmar_ratio": 0.044764893868277256,
+            "max_drawdown": -0.47163108557683764,
+            "win_rate": 0.5171633345907205,
+            "rank_ic": 0.030125882969100844
         },
         "group_4": {
-            "annual_return": 0.05860239082168195,
-            "cumulative_return": 0.8200684668595304,
-            "sharpe_ratio": 0.36236605084489126,
-            "sortino_ratio": 0.4616539545023953,
-            "calmar_ratio": 0.05847375622570634,
-            "max_drawdown": -0.4755726943381522,
-            "win_rate": 0.5173584905660378,
-            "rank_ic": 0.029232677615491337
+            "annual_return": 0.056986828549999924,
+            "cumulative_return": 0.7914641152877917,
+            "sharpe_ratio": 0.35571523596690335,
+            "sortino_ratio": 0.45633144634028333,
+            "calmar_ratio": 0.05738311181309178,
+            "max_drawdown": -0.49754215112571687,
+            "win_rate": 0.5186721991701245,
+            "rank_ic": 0.030125882969100844
         }
     },
     "metadata": {
@@ -67,6 +67,6 @@
         "weight_method": "equal",
         "fee": 0.00030000000000000003,
         "cumprod": true,
-        "trading_days": 2651
+        "trading_days": 2652
     }
 }

@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
-
+from tqdm import tqdm
 
 class Backtest:
     def __init__(
@@ -203,8 +203,8 @@ class Backtest:
             self.preprocess(self.price_df, self.factor_df, self.market_cap_df)
         else:
             self.time_index = self.factor_df.index.intersection(self.price_df.index)
-            self.price_df = self.price_df.loc[self.time_index]
-            self.factor_df = self.factor_df.loc[self.time_index]
+            self.price_df = self.price_df.loc[self.time_index].dropna(how="all")
+            self.factor_df = self.factor_df.loc[self.time_index].dropna(how="all")
             if self.market_cap_df is not None:
                 self.time_index = self.time_index.intersection(self.market_cap_df.index)
                 self.price_df = self.price_df.loc[self.time_index]
@@ -360,7 +360,7 @@ class Backtest:
             Factor values for each asset at each time point.
         """
         cumprod = self.cumprod
-        daily_ret_df = price_df.pct_change().dropna()
+        daily_ret_df = price_df.pct_change()
         if cumprod:
             cum_ret_df = (1 + daily_ret_df).cumprod() - 1
         else:
@@ -859,7 +859,7 @@ class Backtest:
 
                                     # Create aligned weight series
                                     all_assets = list(
-                                        set(prev_assets + available_assets)
+                                        set(list(prev_assets) + list(available_assets))
                                     )
                                     prev_weights_aligned = pd.Series(
                                         0.0, index=all_assets
@@ -1019,26 +1019,24 @@ class Backtest:
                                 if len(available_assets) > 0:
                                     # Initialize portfolio value for this group if not exists
                                     if group_num not in all_group_portfolio_values:
-                                        all_group_portfolio_values[group_num] = {}
+                                        all_group_portfolio_values[group_num] = pd.Series(
+                                            dtype=float
+                                        )
 
                                     # Get previous portfolio value
-                                    prev_portfolio_value = all_group_portfolio_values[
-                                        group_num
-                                    ].get(
-                                        (
-                                            factor_df.index[date_idx - 1]
-                                            if date_idx > 0
-                                            else date
-                                        ),
-                                        1.0,
-                                    )
+                                    if len(all_group_portfolio_values[group_num]) > 0:
+                                        prev_portfolio_value = all_group_portfolio_values[
+                                            group_num
+                                        ].iloc[-1]
+                                    else:
+                                        prev_portfolio_value = 1.0
 
                                     # Track previous weights for turnover calculation
-                                    prev_group_weights = all_group_daily_returns.get(
-                                        f"weights_{group_num}", None
+                                    prev_group_weights = all_group_prev_weights.get(
+                                        group_num, None
                                     )
-                                    prev_group_assets = all_group_daily_returns.get(
-                                        f"assets_{group_num}", None
+                                    prev_group_assets = all_group_prev_assets.get(
+                                        group_num, None
                                     )
 
                                     # Calculate current weights (equal weighting)
@@ -1054,7 +1052,7 @@ class Backtest:
                                     ):
                                         # Create aligned weight series
                                         all_assets = list(
-                                            set(prev_group_assets + available_assets)
+                                            set(list(prev_group_assets) + list(available_assets))
                                         )
                                         prev_weights_aligned = pd.Series(
                                             0.0, index=all_assets
@@ -1092,12 +1090,8 @@ class Backtest:
                                         portfolio_value = prev_portfolio_value
 
                                     # Store current weights and assets for next rebalancing
-                                    all_group_daily_returns[f"weights_{group_num}"] = (
-                                        current_weights
-                                    )
-                                    all_group_daily_returns[f"assets_{group_num}"] = (
-                                        available_assets
-                                    )
+                                    all_group_prev_weights[group_num] = current_weights
+                                    all_group_prev_assets[group_num] = available_assets
 
                                     # Calculate returns for each day in the period
                                     for day_idx in range(date_idx + 1, end_idx):
@@ -1134,7 +1128,7 @@ class Backtest:
                                                         # Store portfolio value
                                                         all_group_portfolio_values[
                                                             group_num
-                                                        ][day_date] = portfolio_value
+                                                        ].loc[day_date] = portfolio_value
 
                                                         # Store the daily return for this group
                                                         if (
@@ -1157,7 +1151,7 @@ class Backtest:
                                         period_values = list(
                                             all_group_portfolio_values[
                                                 group_num
-                                            ].values()
+                                            ].values
                                         )
                                         if len(period_values) >= 2:
                                             period_return = (
@@ -1177,9 +1171,9 @@ class Backtest:
                             else:
                                 avg_group_ret_by_period.loc[date, group_num] = np.nan
             else:
-                raise ValueError(
-                    f"Too many n_groups for {self.price_df.shape[0]} assets."
-                )
+                # Skip rebalance dates with insufficient assets - fill all groups with NaN
+                for group_num in range(self.n_groups):
+                    avg_group_ret_by_period.loc[date, group_num] = np.nan
 
         # Calculate average group returns along the time axis (average across all rebalance periods for each group)
         avg_group_ret = avg_group_ret_by_period.mean(
@@ -1197,13 +1191,15 @@ class Backtest:
                 all_dates.update(group_daily_returns.keys())
             all_dates = sorted(list(all_dates))
 
-            # Create DataFrame for group daily returns
+            # Create DataFrame for group daily returns with correct column names
+            group_nums = sorted([k for k in group_returns_data.keys() if isinstance(k, (int, np.integer))])
             avg_group_daily_ret = pd.DataFrame(
-                index=all_dates, columns=range(len(group_returns_data))
+                index=all_dates, columns=group_nums
             )
             for group_num, group_daily_returns in group_returns_data.items():
-                for date, ret in group_daily_returns.items():
-                    avg_group_daily_ret.loc[date, group_num] = ret
+                if isinstance(group_num, (int, np.integer)):
+                    for date, ret in group_daily_returns.items():
+                        avg_group_daily_ret.loc[date, group_num] = ret
 
             # Calculate cumulative returns for each group (using same method as portfolio)
             if cumprod:
