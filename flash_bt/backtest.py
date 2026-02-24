@@ -413,16 +413,14 @@ class Backtest:
                             valid_assets = current_factors.index.tolist()
 
                             if len(valid_assets) > 0:
-                                # Shift factors to be positive if needed
+                                # Use sigmoid function to map factors to positive range
                                 factor_values = current_factors.values
-                                if np.any(factor_values < 0):
-                                    factor_values = (
-                                        factor_values - factor_values.min() + 1e-6
-                                    )
-
+                                # Apply sigmoid transformation: sigmoid(x) = 1 / (1 + exp(-x))
+                                sigmoid_values = 1 / (1 + np.exp(-factor_values))
+                                
                                 # Normalize to sum to 1
                                 current_weights = pd.Series(
-                                    factor_values / factor_values.sum(),
+                                    sigmoid_values / sigmoid_values.sum(),
                                     index=valid_assets,
                                 )
                             else:
