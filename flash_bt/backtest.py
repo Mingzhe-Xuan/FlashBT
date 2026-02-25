@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
+import warnings
 from tqdm import tqdm
 
 class Backtest:
@@ -14,6 +15,8 @@ class Backtest:
         rebalance_period: int,
         n_groups: int,
         weight_method: str = "equal",
+        group_weight_method: str = None,
+        portfolio_weight_method: str = None,
         market_cap_df: pd.DataFrame = None,
         need_preprocess: bool = True,
         need_normalize: bool = True,
@@ -43,13 +46,21 @@ class Backtest:
             Rebalancing frequency (number of periods between portfolio shifts). Day as the unit.
         n_groups : int
             Number of quantile groups into which assets are partitioned.
-        weight_method : str
-            Weighting scheme applied within each group. Options: "equal", "factor", "inv_vol", "mean_var", "market_cap". Default is "equal".
+        weight_method : str, deprecated
+            **Deprecated**: Default weighting scheme applied to both group-level and portfolio-level. 
+            Please use `group_weight_method` and `portfolio_weight_method` instead.
+            Options: "equal", "factor", "inv_vol", "mean_var", "market_cap". Default is "equal".
             - "equal": Equal weighting across all assets.
             - "factor": Weight assets proportionally to their factor values (linear factor weighting).
             - "inv_vol": Weight assets inversely proportional to their historical volatility.
             - "mean_var": Mean-variance optimization (Markowitz portfolio) maximizing Sharpe ratio.
             - "market_cap": Weight assets proportionally to their market capitalization (requires market_cap_df).
+        group_weight_method : str, optional
+            Weighting scheme applied within each quantile group when calculating group returns. 
+            If not specified, defaults to weight_method. Options: "equal", "factor", "inv_vol", "mean_var", "market_cap".
+        portfolio_weight_method : str, optional
+            Weighting scheme for the overall portfolio construction. If not specified, defaults to weight_method.
+            Options: "equal", "factor", "inv_vol", "mean_var", "market_cap".
         market_cap_df : pd.DataFrame, optional
             Market capitalization data for each asset at each time point. Required if weight_method="market_cap".
             Note that dataframe must have same columns as price_df and has datetime as index.
@@ -129,6 +140,27 @@ class Backtest:
         self.rebalance_period = rebalance_period
         self.n_groups = n_groups
         self.weight_method = weight_method
+        self.group_weight_method = group_weight_method if group_weight_method is not None else weight_method
+        self.portfolio_weight_method = portfolio_weight_method if portfolio_weight_method is not None else weight_method
+        
+        # Deprecation warning for weight_method
+        if group_weight_method is None:
+            warnings.warn(
+                "The 'weight_method' parameter is deprecated for group-level weighting. "
+                "Please use 'group_weight_method' to explicitly specify the weighting scheme for groups. "
+                "Currently falling back to weight_method='{}' for group_weight_method.".format(weight_method),
+                DeprecationWarning,
+                stacklevel=2
+            )
+        if portfolio_weight_method is None:
+            warnings.warn(
+                "The 'weight_method' parameter is deprecated for portfolio-level weighting. "
+                "Please use 'portfolio_weight_method' to explicitly specify the weighting scheme for the portfolio. "
+                "Currently falling back to weight_method='{}' for portfolio_weight_method.".format(weight_method),
+                DeprecationWarning,
+                stacklevel=2
+            )
+        
         self.need_normalize = need_normalize
         self.price_threshold = price_threshold
         self.factor_threshold = factor_threshold
@@ -161,7 +193,7 @@ class Backtest:
             self.price_df, pd.DataFrame
         ), "price_df must be a pandas DataFrame."
 
-        # Validate weight_method with only supported options
+        # Validate weight methods with only supported options
         # Allow for extensibility - only validate currently supported methods
         # Future weight methods can be added here as they are implemented
         supported_methods = [
@@ -175,11 +207,23 @@ class Backtest:
             raise ValueError(
                 f"Invalid weight_method '{weight_method}'. Supported methods: {supported_methods}"
             )
+        if self.group_weight_method not in supported_methods:
+            raise ValueError(
+                f"Invalid group_weight_method '{self.group_weight_method}'. Supported methods: {supported_methods}"
+            )
+        if self.portfolio_weight_method not in supported_methods:
+            raise ValueError(
+                f"Invalid portfolio_weight_method '{self.portfolio_weight_method}'. Supported methods: {supported_methods}"
+            )
 
         # Validate market_cap_df if market_cap weighting is requested
-        if weight_method == "market_cap" and market_cap_df is None:
+        if self.group_weight_method == "market_cap" and market_cap_df is None:
             raise ValueError(
-                "market_cap_df must be provided when weight_method='market_cap'"
+                "market_cap_df must be provided when group_weight_method='market_cap'"
+            )
+        if self.portfolio_weight_method == "market_cap" and market_cap_df is None:
+            raise ValueError(
+                "market_cap_df must be provided when portfolio_weight_method='market_cap'"
             )
 
         assets_price = self.price_df.columns.tolist()
@@ -379,7 +423,7 @@ class Backtest:
         rebalance_dates = factor_df.index[:: self.rebalance_period]
 
         # Precompute volatility for inv_vol method
-        if self.weight_method == "inv_vol":
+        if self.portfolio_weight_method == "inv_vol":
             # Calculate historical volatility for each asset
             # Use rolling window based on look_back parameter
             volatility_df = daily_ret_df.rolling(
@@ -397,14 +441,14 @@ class Backtest:
                 ].tolist()
 
                 if len(current_assets) > 0:
-                    # Calculate weights based on weight_method
-                    if self.weight_method == "equal":
+                    # Calculate weights based on portfolio_weight_method
+                    if self.portfolio_weight_method == "equal":
                         # Equal weighting across available assets
                         current_weights = pd.Series(
                             1.0 / len(current_assets), index=current_assets
                         )
 
-                    elif self.weight_method == "factor":
+                    elif self.portfolio_weight_method == "factor":
                         # Factor-based weighting: weight proportional to factor values
                         if date in factor_df.index:
                             factors_at_date = factor_df.loc[date]
@@ -434,7 +478,7 @@ class Backtest:
                                 1.0 / len(current_assets), index=current_assets
                             )
 
-                    elif self.weight_method == "inv_vol":
+                    elif self.portfolio_weight_method == "inv_vol":
                         # Inverse volatility weighting
                         if date in volatility_df.index:
                             vols_at_date = volatility_df.loc[date]
@@ -463,7 +507,7 @@ class Backtest:
                                 1.0 / len(current_assets), index=current_assets
                             )
 
-                    elif self.weight_method == "mean_var":
+                    elif self.portfolio_weight_method == "mean_var":
                         # Mean-variance optimization (Markowitz portfolio)
                         # Use historical returns to estimate mean and covariance
                         lookback_period = self.look_back
@@ -541,7 +585,7 @@ class Backtest:
                                 1.0 / len(current_assets), index=current_assets
                             )
 
-                    elif self.weight_method == "market_cap":
+                    elif self.portfolio_weight_method == "market_cap":
                         # Market capitalization weighting
                         if (
                             self.market_cap_df is not None
@@ -782,6 +826,12 @@ class Backtest:
             index=rebalance_dates, columns=range(self.n_groups)
         )
 
+        # Precompute volatility for inv_vol method at group level
+        if self.group_weight_method == "inv_vol":
+            volatility_df = daily_ret_df.rolling(
+                window=self.look_back, min_periods=max(10, self.look_back // 2)
+            ).std()
+
         # Create a DataFrame to store daily group returns for visualization
         all_group_daily_returns = {}
         all_group_portfolio_values = {}  # Track portfolio values for each group
@@ -842,10 +892,113 @@ class Backtest:
                                 else:
                                     prev_portfolio_value = 1.0
 
-                                # Calculate current weights (equal weighting)
-                                current_weights = pd.Series(
-                                    1.0 / len(available_assets), index=available_assets
-                                )
+                                # Calculate current weights based on group_weight_method
+                                if self.group_weight_method == "equal":
+                                    current_weights = pd.Series(
+                                        1.0 / len(available_assets), index=available_assets
+                                    )
+                                elif self.group_weight_method == "factor":
+                                    if date in factor_df.index:
+                                        factors_at_date = factor_df.loc[date]
+                                        current_factors = factors_at_date[available_assets].dropna()
+                                        valid_assets = current_factors.index.tolist()
+                                        if len(valid_assets) > 0:
+                                            factor_values = current_factors.values
+                                            sigmoid_values = 1 / (1 + np.exp(-factor_values))
+                                            current_weights = pd.Series(
+                                                sigmoid_values / sigmoid_values.sum(),
+                                                index=valid_assets,
+                                            )
+                                        else:
+                                            current_weights = pd.Series(
+                                                1.0 / len(available_assets), index=available_assets
+                                            )
+                                    else:
+                                        current_weights = pd.Series(
+                                            1.0 / len(available_assets), index=available_assets
+                                        )
+                                elif self.group_weight_method == "inv_vol":
+                                    if date in volatility_df.index:
+                                        vols_at_date = volatility_df.loc[date]
+                                        current_vols = vols_at_date[available_assets].dropna()
+                                        valid_assets = current_vols.index.tolist()
+                                        if len(valid_assets) > 0:
+                                            inv_vols = 1.0 / (current_vols.values + 1e-6)
+                                            current_weights = pd.Series(
+                                                inv_vols / inv_vols.sum(), index=valid_assets
+                                            )
+                                        else:
+                                            current_weights = pd.Series(
+                                                1.0 / len(available_assets), index=available_assets
+                                            )
+                                    else:
+                                        current_weights = pd.Series(
+                                            1.0 / len(available_assets), index=available_assets
+                                        )
+                                elif self.group_weight_method == "market_cap":
+                                    if (
+                                        self.market_cap_df is not None
+                                        and date in self.market_cap_df.index
+                                    ):
+                                        market_caps_at_date = self.market_cap_df.loc[date]
+                                        current_market_caps = market_caps_at_date[
+                                            available_assets
+                                        ].dropna()
+                                        valid_assets = current_market_caps.index.tolist()
+                                        if len(valid_assets) > 0:
+                                            market_cap_values = current_market_caps.values
+                                            market_cap_values = np.maximum(market_cap_values, 0)
+                                            if market_cap_values.sum() > 0:
+                                                current_weights = pd.Series(
+                                                    market_cap_values / market_cap_values.sum(),
+                                                    index=valid_assets,
+                                                )
+                                            else:
+                                                current_weights = pd.Series(
+                                                    1.0 / len(valid_assets), index=valid_assets
+                                                )
+                                        else:
+                                            current_weights = pd.Series(
+                                                1.0 / len(available_assets), index=available_assets
+                                            )
+                                    else:
+                                        current_weights = pd.Series(
+                                            1.0 / len(available_assets), index=available_assets
+                                        )
+                                elif self.group_weight_method == "mean_var":
+                                    lookback_period = self.look_back
+                                    date_idx = factor_df.index.get_loc(date)
+                                    if date_idx >= lookback_period:
+                                        hist_returns = daily_ret_df.iloc[
+                                            date_idx - lookback_period : date_idx
+                                        ]
+                                        hist_returns = hist_returns[available_assets].dropna(
+                                            axis=1, how="all"
+                                        )
+                                        valid_assets = hist_returns.columns.tolist()
+                                        if len(valid_assets) > 1:
+                                            mean_returns = hist_returns.mean()
+                                            cov_matrix = hist_returns.cov()
+                                            cov_matrix = cov_matrix.fillna(0)
+                                            inv_cov = np.linalg.inv(cov_matrix.values + 1e-6 * np.eye(len(valid_assets)))
+                                            ones = np.ones(len(valid_assets))
+                                            weights = inv_cov @ ones
+                                            weights = weights / weights.sum()
+                                            current_weights = pd.Series(
+                                                weights, index=valid_assets
+                                            )
+                                        else:
+                                            current_weights = pd.Series(
+                                                1.0 / len(available_assets), index=available_assets
+                                            )
+                                    else:
+                                        current_weights = pd.Series(
+                                            1.0 / len(available_assets), index=available_assets
+                                        )
+                                else:
+                                    current_weights = pd.Series(
+                                        1.0 / len(available_assets), index=available_assets
+                                    )
 
                                 # Calculate turnover and apply fee
                                 if (
@@ -905,14 +1058,22 @@ class Backtest:
                                                 day_date, available_assets
                                             ]
                                             if not day_rets.empty:
-                                                # Apply weighting based on weight_method
-                                                if self.weight_method == "equal":
+                                                # Apply weighting based on group_weight_method
+                                                if self.group_weight_method == "equal":
                                                     # Equal weighting
                                                     weighted_return = day_rets.mean()
-                                                # Future weight methods can be added here:
-                                                # elif self.weight_method == "new_method":
-                                                #     # Implementation for new weighting method
-                                                #     ...
+                                                elif self.group_weight_method == "factor":
+                                                    # Use the weights calculated at rebalancing
+                                                    # Get the weights for the available assets
+                                                    day_weights = current_weights[available_assets]
+                                                    # Calculate weighted return
+                                                    weighted_return = (day_rets * day_weights).sum()
+                                                elif self.group_weight_method in ["inv_vol", "market_cap", "mean_var"]:
+                                                    # Use the weights calculated at rebalancing for other methods
+                                                    # Get the weights for the available assets
+                                                    day_weights = current_weights[available_assets]
+                                                    # Calculate weighted return
+                                                    weighted_return = (day_rets * day_weights).sum()
                                                 else:
                                                     # Default to equal weighting for any unrecognized method
                                                     weighted_return = day_rets.mean()
@@ -1037,11 +1198,115 @@ class Backtest:
                                         group_num, None
                                     )
 
-                                    # Calculate current weights (equal weighting)
-                                    current_weights = pd.Series(
-                                        1.0 / len(available_assets),
-                                        index=available_assets,
-                                    )
+                                    # Calculate current weights based on group_weight_method
+                                    if self.group_weight_method == "equal":
+                                        current_weights = pd.Series(
+                                            1.0 / len(available_assets),
+                                            index=available_assets,
+                                        )
+                                    elif self.group_weight_method == "factor":
+                                        if date in factor_df.index:
+                                            factors_at_date = factor_df.loc[date]
+                                            current_factors = factors_at_date[available_assets].dropna()
+                                            valid_assets = current_factors.index.tolist()
+                                            if len(valid_assets) > 0:
+                                                factor_values = current_factors.values
+                                                sigmoid_values = 1 / (1 + np.exp(-factor_values))
+                                                current_weights = pd.Series(
+                                                    sigmoid_values / sigmoid_values.sum(),
+                                                    index=valid_assets,
+                                                )
+                                            else:
+                                                current_weights = pd.Series(
+                                                    1.0 / len(available_assets), index=available_assets
+                                                )
+                                        else:
+                                            current_weights = pd.Series(
+                                                1.0 / len(available_assets), index=available_assets
+                                            )
+                                    elif self.group_weight_method == "inv_vol":
+                                        if date in volatility_df.index:
+                                            vols_at_date = volatility_df.loc[date]
+                                            current_vols = vols_at_date[available_assets].dropna()
+                                            valid_assets = current_vols.index.tolist()
+                                            if len(valid_assets) > 0:
+                                                inv_vols = 1.0 / (current_vols.values + 1e-6)
+                                                current_weights = pd.Series(
+                                                    inv_vols / inv_vols.sum(), index=valid_assets
+                                                )
+                                            else:
+                                                current_weights = pd.Series(
+                                                    1.0 / len(available_assets), index=available_assets
+                                                )
+                                        else:
+                                            current_weights = pd.Series(
+                                                1.0 / len(available_assets), index=available_assets
+                                            )
+                                    elif self.group_weight_method == "market_cap":
+                                        if (
+                                            self.market_cap_df is not None
+                                            and date in self.market_cap_df.index
+                                        ):
+                                            market_caps_at_date = self.market_cap_df.loc[date]
+                                            current_market_caps = market_caps_at_date[
+                                                available_assets
+                                            ].dropna()
+                                            valid_assets = current_market_caps.index.tolist()
+                                            if len(valid_assets) > 0:
+                                                market_cap_values = current_market_caps.values
+                                                market_cap_values = np.maximum(market_cap_values, 0)
+                                                if market_cap_values.sum() > 0:
+                                                    current_weights = pd.Series(
+                                                        market_cap_values / market_cap_values.sum(),
+                                                        index=valid_assets,
+                                                    )
+                                                else:
+                                                    current_weights = pd.Series(
+                                                        1.0 / len(valid_assets), index=valid_assets
+                                                    )
+                                            else:
+                                                current_weights = pd.Series(
+                                                    1.0 / len(available_assets), index=available_assets
+                                                )
+                                        else:
+                                            current_weights = pd.Series(
+                                                1.0 / len(available_assets), index=available_assets
+                                            )
+                                    elif self.group_weight_method == "mean_var":
+                                        lookback_period = self.look_back
+                                        date_idx_local = factor_df.index.get_loc(date)
+                                        if date_idx_local >= lookback_period:
+                                            hist_returns = daily_ret_df.iloc[
+                                                date_idx_local - lookback_period : date_idx_local
+                                            ]
+                                            hist_returns = hist_returns[available_assets].dropna(
+                                                axis=1, how="all"
+                                            )
+                                            valid_assets = hist_returns.columns.tolist()
+                                            if len(valid_assets) > 1:
+                                                mean_returns = hist_returns.mean()
+                                                cov_matrix = hist_returns.cov()
+                                                cov_matrix = cov_matrix.fillna(0)
+                                                inv_cov = np.linalg.inv(cov_matrix.values + 1e-6 * np.eye(len(valid_assets)))
+                                                ones = np.ones(len(valid_assets))
+                                                weights = inv_cov @ ones
+                                                weights = weights / weights.sum()
+                                                current_weights = pd.Series(
+                                                    weights, index=valid_assets
+                                                )
+                                            else:
+                                                current_weights = pd.Series(
+                                                    1.0 / len(available_assets), index=available_assets
+                                                )
+                                        else:
+                                            current_weights = pd.Series(
+                                                1.0 / len(available_assets), index=available_assets
+                                            )
+                                    else:
+                                        current_weights = pd.Series(
+                                            1.0 / len(available_assets),
+                                            index=available_assets,
+                                        )
 
                                     # Calculate turnover and apply fee
                                     if (
@@ -1101,16 +1366,28 @@ class Backtest:
                                                     day_date, available_assets
                                                 ]
                                                 if not day_rets.empty:
-                                                    # Apply weighting based on weight_method
-                                                    if self.weight_method == "equal":
+                                                    # Apply weighting based on group_weight_method
+                                                    if self.group_weight_method == "equal":
                                                         # Equal weighting
                                                         weighted_return = (
                                                             day_rets.mean()
                                                         )
-                                                    # Future weight methods can be added here:
-                                                    # elif self.weight_method == "new_method":
-                                                    #     # Implementation for new weighting method
-                                                    #     ...
+                                                    elif self.group_weight_method == "factor":
+                                                        # Use the weights calculated at rebalancing
+                                                        # Get the weights for the available assets
+                                                        day_weights = current_weights[available_assets]
+                                                        # Calculate weighted return
+                                                        weighted_return = (
+                                                            (day_rets * day_weights).sum()
+                                                        )
+                                                    elif self.group_weight_method in ["inv_vol", "market_cap", "mean_var"]:
+                                                        # Use the weights calculated at rebalancing for other methods
+                                                        # Get the weights for the available assets
+                                                        day_weights = current_weights[available_assets]
+                                                        # Calculate weighted return
+                                                        weighted_return = (
+                                                            (day_rets * day_weights).sum()
+                                                        )
                                                     else:
                                                         # Default to equal weighting for any unrecognized method
                                                         weighted_return = (
@@ -1414,7 +1691,8 @@ class Backtest:
             "metadata": {
                 "rebalance_period": self.rebalance_period,
                 "n_groups": self.n_groups,
-                "weight_method": self.weight_method,
+                "group_weight_method": self.group_weight_method,
+                "portfolio_weight_method": self.portfolio_weight_method,
                 "fee": float(self.fee),
                 "cumprod": self.cumprod,
                 "trading_days": len(overall_daily_returns),
