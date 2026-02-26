@@ -364,6 +364,35 @@ class Backtest:
         if market_cap_df is not None:
             self.market_cap_df = market_cap_df
 
+    def _calculate_rank_ic(
+        self,
+        factors: pd.Series,
+        returns: pd.Series,
+    ) -> float:
+        r"""
+        Calculate Rank IC (Spearman correlation) between factors and returns.
+
+        Parameters
+        ----------
+        factors : pd.Series
+            Factor values for assets.
+        returns : pd.Series
+            Return values for assets.
+
+        Returns
+        -------
+        float
+            Rank IC value (Spearman correlation), or 0.0 if calculation fails.
+        """
+        common_assets = factors.index.intersection(returns.index)
+        if len(common_assets) > 1:
+            aligned_factors = factors[common_assets]
+            aligned_returns = returns[common_assets]
+            rank_ic_val = aligned_factors.corr(aligned_returns, method="spearman")
+            if not pd.isna(rank_ic_val):
+                return rank_ic_val
+        return 0.0
+
     def compute_metrics(
         self,
         price_df: pd.DataFrame,
@@ -780,20 +809,11 @@ class Backtest:
                         else:
                             cumulative_returns = period_returns.sum()
                         
-                        # Find common assets
-                        common_assets = factors_at_date.index.intersection(cumulative_returns.index)
-                        if len(common_assets) > 1:  # Need at least 2 points for correlation
-                            aligned_factors = factors_at_date[common_assets]
-                            aligned_returns = cumulative_returns[common_assets]
-
-                            # Calculate Rank IC for this rebalance date
-                            rank_ic_val = aligned_factors.corr(
-                                aligned_returns, method="spearman"
-                            )
-
-                            if not pd.isna(rank_ic_val):
-                                rank_ic_series.append(rank_ic_val)
-                                rank_ic_dates.append(date)
+                        # Calculate Rank IC for this rebalance date
+                        rank_ic_val = self._calculate_rank_ic(factors_at_date, cumulative_returns)
+                        if rank_ic_val != 0.0:
+                            rank_ic_series.append(rank_ic_val)
+                            rank_ic_dates.append(date)
 
         # Also calculate overall Rank IC across all rebalance periods and assets
         # Use factors at rebalance time t to predict cumulative returns from t+1 to t+rebalance_period
@@ -831,11 +851,7 @@ class Backtest:
         if factor_values_list and return_values_list:
             aligned_factors = pd.concat(factor_values_list)
             aligned_returns = pd.concat(return_values_list)
-            overall_rank_ic = aligned_factors.corr(
-                aligned_returns, method="spearman"
-            )
-            if pd.isna(overall_rank_ic):
-                overall_rank_ic = 0.0
+            overall_rank_ic = self._calculate_rank_ic(aligned_factors, aligned_returns)
         else:
             overall_rank_ic = 0.0
 
@@ -1956,18 +1972,10 @@ class Backtest:
                                 else:
                                     cumulative_returns = period_returns.sum()
                                 
-                                common_assets = factors_at_date.index.intersection(cumulative_returns.index)
-                                if len(common_assets) > 1:
-                                    aligned_factors = factors_at_date[common_assets]
-                                    aligned_returns = cumulative_returns[common_assets]
-
-                                    rank_ic_val = aligned_factors.corr(
-                                        aligned_returns, method="spearman"
-                                    )
-
-                                    if not pd.isna(rank_ic_val):
-                                        rank_ic_series.append(rank_ic_val)
-                                        dates.append(date)
+                                rank_ic_val = self._calculate_rank_ic(factors_at_date, cumulative_returns)
+                                if rank_ic_val != 0.0:
+                                    rank_ic_series.append(rank_ic_val)
+                                    dates.append(date)
 
                 if dates and rank_ic_series:
                     ax.plot(
