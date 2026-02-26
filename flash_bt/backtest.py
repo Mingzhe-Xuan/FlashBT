@@ -22,6 +22,7 @@ class Backtest:
         need_normalize: bool = True,
         price_threshold: float = 1e6,
         factor_threshold: float = 10,
+        need_metrics: bool = True,
         need_plot: bool = True,
         metrics_path: str = None,
         figures_path: str = None,
@@ -72,8 +73,10 @@ class Backtest:
             Upper bound of valid price values. Default is 1e6.
         factor_threshold : float
             The maximum times of standard deviation from mean is allowed for factor values. Default is 10.
-        need_plot : bool
+        need_plot: bool
             Whether to plot results after back-testing. Default is True.
+        need_metrics : bool
+            Whether to save back-test metrics to JSON file. Default is True.
         metrics_path : str
             Path to save back-test metrics. Default is None.
         figures_path : str
@@ -165,6 +168,7 @@ class Backtest:
         self.price_threshold = price_threshold
         self.factor_threshold = factor_threshold
         self.need_plot = need_plot
+        self.need_metrics = need_metrics
         self.metrics_path = metrics_path
         self.figures_path = figures_path
         self.cumprod = cumprod
@@ -775,7 +779,7 @@ class Backtest:
                         aligned_returns = returns_at_next_date[common_assets]
 
                         # Calculate Rank IC for this date using current factors to predict next returns
-                        rank_ic_val = aligned_factors.rank().corr(
+                        rank_ic_val = aligned_factors.corr(
                             aligned_returns, method="spearman"
                         )
 
@@ -797,7 +801,7 @@ class Backtest:
         if len(common_idx) > 1:  # Need at least 2 points for correlation
             aligned_factors = factor_values[common_idx]
             aligned_returns = return_values[common_idx]
-            overall_rank_ic = aligned_factors.rank().corr(
+            overall_rank_ic = aligned_factors.corr(
                 aligned_returns, method="spearman"
             )
             if pd.isna(overall_rank_ic):
@@ -1503,6 +1507,154 @@ class Backtest:
             "avg_group_cum_ret": avg_group_cum_ret,
         }
 
+    def save_metrics(self):
+        import json
+
+        overall_daily_returns = self.portfolio_daily_ret
+        overall_cumulative_return = self.portfolio_cum_ret
+
+        if len(overall_daily_returns) > 0:
+            trading_days = len(overall_daily_returns)
+            total_return = (
+                overall_cumulative_return.iloc[-1]
+                if len(overall_cumulative_return) > 0
+                else 0
+            )
+            if self.cumprod:
+                annual_return = (
+                    (1 + total_return) ** (252 / trading_days) - 1
+                    if trading_days > 0
+                    else 0
+                )
+            else:
+                annual_return = (
+                    total_return * (252 / trading_days) if trading_days > 0 else 0
+                )
+        else:
+            annual_return = 0
+
+        group_metrics = {}
+        if (
+            hasattr(self, "avg_group_daily_ret")
+            and self.avg_group_daily_ret is not None
+            and not self.avg_group_daily_ret.empty
+        ):
+            for group_num in self.avg_group_daily_ret.columns:
+                group_daily_rets = self.avg_group_daily_ret[group_num].dropna()
+
+                if len(group_daily_rets) > 0:
+                    if self.cumprod:
+                        group_cum_ret = (1 + group_daily_rets).cumprod() - 1
+                    else:
+                        group_cum_ret = group_daily_rets.cumsum()
+
+                    group_total_return = (
+                        group_cum_ret.iloc[-1] if len(group_cum_ret) > 0 else 0
+                    )
+
+                    trading_days = len(group_daily_rets)
+                    if self.cumprod:
+                        group_annual_return = (
+                            (1 + group_total_return) ** (252 / trading_days) - 1
+                            if trading_days > 0
+                            else 0
+                        )
+                    else:
+                        group_annual_return = (
+                            group_total_return * (252 / trading_days)
+                            if trading_days > 0
+                            else 0
+                        )
+
+                    group_mean = group_daily_rets.mean()
+                    group_std = group_daily_rets.std()
+                    if group_std == 0 or pd.isna(group_std) or pd.isna(group_mean):
+                        group_sharpe = 0.0
+                    else:
+                        group_sharpe = (group_mean / group_std) * np.sqrt(252)
+
+                    group_negative_returns = group_daily_rets[group_daily_rets < 0]
+                    if len(group_negative_returns) > 0:
+                        group_negative_std = group_negative_returns.std()
+                        if (
+                            group_negative_std == 0
+                            or pd.isna(group_negative_std)
+                            or pd.isna(group_mean)
+                        ):
+                            group_sortino = 0.0
+                        else:
+                            group_sortino = (group_mean / group_negative_std) * np.sqrt(
+                                252
+                            )
+                    else:
+                        group_sortino = group_sharpe
+
+                    group_min = group_daily_rets.min()
+                    if group_min == 0 or pd.isna(group_min) or pd.isna(group_mean):
+                        group_calmar = 0.0
+                    else:
+                        group_calmar = (group_mean / abs(group_min)) * np.sqrt(252)
+
+                    if self.cumprod:
+                        group_running_max = (1 + group_cum_ret).cummax()
+                        group_drawdown = (1 + group_cum_ret) / group_running_max - 1
+                    else:
+                        group_running_max = group_cum_ret.expanding().max()
+                        group_drawdown = group_cum_ret - group_running_max
+
+                    if group_drawdown.empty or pd.isna(group_drawdown.min()):
+                        group_max_drawdown = 0.0
+                    else:
+                        group_max_drawdown = group_drawdown.min()
+
+                    if group_daily_rets.empty or pd.isna((group_daily_rets > 0).mean()):
+                        group_win_rate = 0.0
+                    else:
+                        group_win_rate = (group_daily_rets > 0).mean()
+
+                    group_rank_ic = self.rank_ic if hasattr(self, "rank_ic") else 0.0
+
+                    group_metrics[f"group_{group_num}"] = {
+                        "annual_return": float(group_annual_return),
+                        "cumulative_return": float(group_total_return),
+                        "sharpe_ratio": float(group_sharpe),
+                        "sortino_ratio": float(group_sortino),
+                        "calmar_ratio": float(group_calmar),
+                        "max_drawdown": float(group_max_drawdown),
+                        "win_rate": float(group_win_rate),
+                        "rank_ic": float(group_rank_ic),
+                    }
+
+        comprehensive_metrics = {
+            "overall": {
+                "sharpe_ratio": float(self.sharpe_ratio),
+                "sortino_ratio": float(self.sortino_ratio),
+                "calmar_ratio": float(self.calmar_ratio),
+                "max_drawdown": float(self.max_drawdown),
+                "win_rate": float(self.win_rate),
+                "rank_ic": float(self.rank_ic),
+                "annual_return": float(annual_return),
+                "cumulative_return": (
+                    float(overall_cumulative_return.iloc[-1])
+                    if len(overall_cumulative_return) > 0
+                    else 0.0
+                ),
+            },
+            "groups": group_metrics,
+            "metadata": {
+                "rebalance_period": self.rebalance_period,
+                "n_groups": self.n_groups,
+                "group_weight_method": self.group_weight_method,
+                "portfolio_weight_method": self.portfolio_weight_method,
+                "fee": float(self.fee),
+                "cumprod": self.cumprod,
+                "trading_days": len(overall_daily_returns),
+            },
+        }
+
+        with open(os.path.join(self.metrics_path, "backtest_metrics.json"), "w") as f:
+            json.dump(comprehensive_metrics, f, indent=4)
+
     def run(self):
         r"""
         Run back-test. The back-testing steps include:
@@ -1541,166 +1693,8 @@ class Backtest:
         self.avg_group_daily_ret = metrics_dict["avg_group_daily_ret"]
         self.avg_group_cum_ret = metrics_dict["avg_group_cum_ret"]
 
-        # Save comprehensive metrics to file
-        import json
-
-        # Calculate additional metrics
-        # Overall portfolio metrics (using portfolio returns with fees)
-        overall_daily_returns = self.portfolio_daily_ret
-        overall_cumulative_return = self.portfolio_cum_ret
-
-        # Annual return calculation
-        if len(overall_daily_returns) > 0:
-            trading_days = len(overall_daily_returns)
-            total_return = (
-                overall_cumulative_return.iloc[-1]
-                if len(overall_cumulative_return) > 0
-                else 0
-            )
-            if self.cumprod:
-                annual_return = (
-                    (1 + total_return) ** (252 / trading_days) - 1
-                    if trading_days > 0
-                    else 0
-                )
-            else:
-                annual_return = (
-                    total_return * (252 / trading_days) if trading_days > 0 else 0
-                )
-        else:
-            annual_return = 0
-
-        # Calculate group-specific metrics
-        group_metrics = {}
-        if (
-            hasattr(self, "avg_group_daily_ret")
-            and self.avg_group_daily_ret is not None
-            and not self.avg_group_daily_ret.empty
-        ):
-            for group_num in self.avg_group_daily_ret.columns:
-                group_daily_rets = self.avg_group_daily_ret[group_num].dropna()
-
-                if len(group_daily_rets) > 0:
-                    # Group cumulative return
-                    if self.cumprod:
-                        group_cum_ret = (1 + group_daily_rets).cumprod() - 1
-                    else:
-                        group_cum_ret = group_daily_rets.cumsum()
-
-                    group_total_return = (
-                        group_cum_ret.iloc[-1] if len(group_cum_ret) > 0 else 0
-                    )
-
-                    # Group annual return
-                    trading_days = len(group_daily_rets)
-                    if self.cumprod:
-                        group_annual_return = (
-                            (1 + group_total_return) ** (252 / trading_days) - 1
-                            if trading_days > 0
-                            else 0
-                        )
-                    else:
-                        group_annual_return = (
-                            group_total_return * (252 / trading_days)
-                            if trading_days > 0
-                            else 0
-                        )
-
-                    # Group Sharpe ratio
-                    group_mean = group_daily_rets.mean()
-                    group_std = group_daily_rets.std()
-                    if group_std == 0 or pd.isna(group_std) or pd.isna(group_mean):
-                        group_sharpe = 0.0
-                    else:
-                        group_sharpe = (group_mean / group_std) * np.sqrt(252)
-
-                    # Group Sortino ratio
-                    group_negative_returns = group_daily_rets[group_daily_rets < 0]
-                    if len(group_negative_returns) > 0:
-                        group_negative_std = group_negative_returns.std()
-                        if (
-                            group_negative_std == 0
-                            or pd.isna(group_negative_std)
-                            or pd.isna(group_mean)
-                        ):
-                            group_sortino = 0.0
-                        else:
-                            group_sortino = (group_mean / group_negative_std) * np.sqrt(
-                                252
-                            )
-                    else:
-                        group_sortino = group_sharpe
-
-                    # Group Calmar ratio
-                    group_min = group_daily_rets.min()
-                    if group_min == 0 or pd.isna(group_min) or pd.isna(group_mean):
-                        group_calmar = 0.0
-                    else:
-                        group_calmar = (group_mean / abs(group_min)) * np.sqrt(252)
-
-                    # Group max drawdown
-                    if self.cumprod:
-                        group_running_max = (1 + group_cum_ret).cummax()
-                        group_drawdown = (1 + group_cum_ret) / group_running_max - 1
-                    else:
-                        group_running_max = group_cum_ret.expanding().max()
-                        group_drawdown = group_cum_ret - group_running_max
-
-                    if group_drawdown.empty or pd.isna(group_drawdown.min()):
-                        group_max_drawdown = 0.0
-                    else:
-                        group_max_drawdown = group_drawdown.min()
-
-                    # Group win rate
-                    if group_daily_rets.empty or pd.isna((group_daily_rets > 0).mean()):
-                        group_win_rate = 0.0
-                    else:
-                        group_win_rate = (group_daily_rets > 0).mean()
-
-                    # Group Rank IC (use overall rank_ic as approximation)
-                    group_rank_ic = self.rank_ic if hasattr(self, "rank_ic") else 0.0
-
-                    group_metrics[f"group_{group_num}"] = {
-                        "annual_return": float(group_annual_return),
-                        "cumulative_return": float(group_total_return),
-                        "sharpe_ratio": float(group_sharpe),
-                        "sortino_ratio": float(group_sortino),
-                        "calmar_ratio": float(group_calmar),
-                        "max_drawdown": float(group_max_drawdown),
-                        "win_rate": float(group_win_rate),
-                        "rank_ic": float(group_rank_ic),
-                    }
-
-        # Prepare comprehensive metrics dictionary
-        comprehensive_metrics = {
-            "overall": {
-                "sharpe_ratio": float(self.sharpe_ratio),
-                "sortino_ratio": float(self.sortino_ratio),
-                "calmar_ratio": float(self.calmar_ratio),
-                "max_drawdown": float(self.max_drawdown),
-                "win_rate": float(self.win_rate),
-                "rank_ic": float(self.rank_ic),
-                "annual_return": float(annual_return),
-                "cumulative_return": (
-                    float(overall_cumulative_return.iloc[-1])
-                    if len(overall_cumulative_return) > 0
-                    else 0.0
-                ),
-            },
-            "groups": group_metrics,
-            "metadata": {
-                "rebalance_period": self.rebalance_period,
-                "n_groups": self.n_groups,
-                "group_weight_method": self.group_weight_method,
-                "portfolio_weight_method": self.portfolio_weight_method,
-                "fee": float(self.fee),
-                "cumprod": self.cumprod,
-                "trading_days": len(overall_daily_returns),
-            },
-        }
-
-        with open(os.path.join(self.metrics_path, "backtest_metrics.json"), "w") as f:
-            json.dump(comprehensive_metrics, f, indent=4)
+        if self.need_metrics:
+            self.save_metrics()
 
         # Plot results if required
         if self.need_plot:
@@ -1916,7 +1910,7 @@ class Backtest:
                             daily_returns.loc[date]
                             if date in daily_returns.index
                             else None
-                        )
+                        ).shift(-1)
 
                         if returns_next_day is not None:
                             returns_aligned = factors_at_date.index.intersection(
@@ -1929,7 +1923,7 @@ class Backtest:
                                 aligned_returns = returns_next_day[returns_aligned]
 
                                 # Calculate Rank IC (correlation of ranks)
-                                rank_ic_val = aligned_factors.rank().corr(
+                                rank_ic_val = aligned_factors.corr(
                                     aligned_returns, method="spearman"
                                 )
 
