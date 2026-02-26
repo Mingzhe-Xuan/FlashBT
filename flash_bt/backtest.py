@@ -6,6 +6,7 @@ import os
 import warnings
 from tqdm import tqdm
 
+
 class Backtest:
     def __init__(
         self,
@@ -57,7 +58,7 @@ class Backtest:
             - "mean_var": Mean-variance optimization (Markowitz portfolio) maximizing Sharpe ratio.
             - "market_cap": Weight assets proportionally to their market capitalization (requires market_cap_df).
         group_weight_method : str, optional
-            Weighting scheme applied within each quantile group when calculating group returns. 
+            Weighting scheme applied within each quantile group when calculating group returns.
             If not specified, defaults to weight_method. Options: "equal", "factor", "inv_vol", "mean_var", "market_cap".
         portfolio_weight_method : str, optional
             Weighting scheme for the overall portfolio construction. If not specified, defaults to weight_method.
@@ -746,61 +747,90 @@ class Backtest:
         else:
             win_rate = (avg_daily_returns > 0).mean()
 
-        # Calculate Rank IC for each time point for visualization
-        # Use factors at time t to predict returns at time t+1 to avoid forward-looking bias
+        # Calculate Rank IC for each rebalance moment
+        # Use factors at time t to predict cumulative returns from t+1 to t+rebalance_period
         rank_ic_series = []
         rank_ic_dates = []
 
-        # Get the list of dates in order
-        factor_dates = factor_df.index
-        for i, date in enumerate(
-            factor_dates[:-1]
-        ):  # Exclude the last date since there's no future return
+        # Get rebalance dates
+        rebalance_dates = factor_df.index[:: self.rebalance_period]
+
+        for i, date in enumerate(rebalance_dates):
             if date in daily_ret_df.index:
-                # Get factors at current date (time t)
+                # Get factors at current rebalance date (time t)
                 factors_at_date = factor_df.loc[date].dropna()
 
-                # Get returns at the next date (time t+1) - this avoids forward-looking bias
-                next_date_idx = i + 1
-                if (
-                    next_date_idx < len(factor_dates)
-                    and factor_dates[next_date_idx] in daily_ret_df.index
-                ):
-                    returns_at_next_date = daily_ret_df.loc[
-                        factor_dates[next_date_idx]
-                    ].dropna()
+                # Calculate cumulative returns from t+1 to t+rebalance_period
+                # Find the index of current date in factor_df
+                current_idx = factor_df.index.get_loc(date)
+                next_idx = min(current_idx + self.rebalance_period, len(factor_df.index))
+                
+                # Get the date range for cumulative returns
+                start_date_idx = current_idx + 1
+                end_date_idx = next_idx
+                
+                if start_date_idx < len(factor_df.index):
+                    # Get returns for the period from t+1 to t+rebalance_period
+                    period_returns = daily_ret_df.iloc[start_date_idx:end_date_idx]
+                    
+                    if not period_returns.empty:
+                        # Calculate cumulative returns for each asset over the period
+                        if self.cumprod:
+                            cumulative_returns = (1 + period_returns).prod() - 1
+                        else:
+                            cumulative_returns = period_returns.sum()
+                        
+                        # Find common assets
+                        common_assets = factors_at_date.index.intersection(cumulative_returns.index)
+                        if len(common_assets) > 1:  # Need at least 2 points for correlation
+                            aligned_factors = factors_at_date[common_assets]
+                            aligned_returns = cumulative_returns[common_assets]
 
-                    # Find common assets
-                    common_assets = factors_at_date.index.intersection(
-                        returns_at_next_date.index
-                    )
-                    if len(common_assets) > 1:  # Need at least 2 points for correlation
-                        aligned_factors = factors_at_date[common_assets]
-                        aligned_returns = returns_at_next_date[common_assets]
+                            # Calculate Rank IC for this rebalance date
+                            rank_ic_val = aligned_factors.corr(
+                                aligned_returns, method="spearman"
+                            )
 
-                        # Calculate Rank IC for this date using current factors to predict next returns
-                        rank_ic_val = aligned_factors.corr(
-                            aligned_returns, method="spearman"
-                        )
+                            if not pd.isna(rank_ic_val):
+                                rank_ic_series.append(rank_ic_val)
+                                rank_ic_dates.append(date)
 
-                        if not pd.isna(rank_ic_val):
-                            rank_ic_series.append(rank_ic_val)
-                            rank_ic_dates.append(date)
+        # Also calculate overall Rank IC across all rebalance periods and assets
+        # Use factors at rebalance time t to predict cumulative returns from t+1 to t+rebalance_period
+        factor_values_list = []
+        return_values_list = []
 
-        # Also calculate overall Rank IC across all time periods and assets
-        # Use factors at time t to predict returns at time t+1 to avoid forward-looking bias
-        # Shift returns forward by one period to align factors with future returns
-        factor_values = factor_df.stack()
-        shifted_return_df = daily_ret_df.shift(
-            -1
-        )  # Shift returns back by 1 so factor t predicts return t+1
-        return_values = shifted_return_df.reindex(factor_df.index).stack()
+        for i, date in enumerate(rebalance_dates):
+            if date in daily_ret_df.index:
+                # Get factors at current rebalance date (time t)
+                factors_at_date = factor_df.loc[date].dropna()
 
-        # Only keep pairs where both factor and return exist
-        common_idx = factor_values.index.intersection(return_values.index)
-        if len(common_idx) > 1:  # Need at least 2 points for correlation
-            aligned_factors = factor_values[common_idx]
-            aligned_returns = return_values[common_idx]
+                # Calculate cumulative returns from t+1 to t+rebalance_period
+                current_idx = factor_df.index.get_loc(date)
+                next_idx = min(current_idx + self.rebalance_period, len(factor_df.index))
+                
+                start_date_idx = current_idx + 1
+                end_date_idx = next_idx
+                
+                if start_date_idx < len(factor_df.index):
+                    period_returns = daily_ret_df.iloc[start_date_idx:end_date_idx]
+                    
+                    if not period_returns.empty:
+                        if self.cumprod:
+                            cumulative_returns = (1 + period_returns).prod() - 1
+                        else:
+                            cumulative_returns = period_returns.sum()
+                        
+                        # Find common assets
+                        common_assets = factors_at_date.index.intersection(cumulative_returns.index)
+                        if len(common_assets) > 0:
+                            factor_values_list.append(factors_at_date[common_assets])
+                            return_values_list.append(cumulative_returns[common_assets])
+
+        # Calculate overall Rank IC
+        if factor_values_list and return_values_list:
+            aligned_factors = pd.concat(factor_values_list)
+            aligned_returns = pd.concat(return_values_list)
             overall_rank_ic = aligned_factors.corr(
                 aligned_returns, method="spearman"
             )
@@ -1902,34 +1932,42 @@ class Backtest:
                 rank_ic_series = []
                 dates = []
 
-                for date in self.factor_df.index:
+                # Get rebalance dates
+                rebalance_dates = self.factor_df.index[:: self.rebalance_period]
+
+                for date in rebalance_dates:
                     if date in daily_returns.index:
-                        # Calculate Rank IC at this date
+                        # Get factors at current rebalance date (time t)
                         factors_at_date = self.factor_df.loc[date].dropna()
-                        returns_next_day = (
-                            daily_returns.loc[date]
-                            if date in daily_returns.index
-                            else None
-                        ).shift(-1)
 
-                        if returns_next_day is not None:
-                            returns_aligned = factors_at_date.index.intersection(
-                                returns_next_day.index
-                            )
-                            if (
-                                len(returns_aligned) > 1
-                            ):  # Need at least 2 points for correlation
-                                aligned_factors = factors_at_date[returns_aligned]
-                                aligned_returns = returns_next_day[returns_aligned]
+                        # Calculate cumulative returns from t+1 to t+rebalance_period
+                        current_idx = self.factor_df.index.get_loc(date)
+                        next_idx = min(current_idx + self.rebalance_period, len(self.factor_df.index))
+                        
+                        start_date_idx = current_idx + 1
+                        end_date_idx = next_idx
+                        
+                        if start_date_idx < len(self.factor_df.index):
+                            period_returns = daily_returns.iloc[start_date_idx:end_date_idx]
+                            
+                            if not period_returns.empty:
+                                if self.cumprod:
+                                    cumulative_returns = (1 + period_returns).prod() - 1
+                                else:
+                                    cumulative_returns = period_returns.sum()
+                                
+                                common_assets = factors_at_date.index.intersection(cumulative_returns.index)
+                                if len(common_assets) > 1:
+                                    aligned_factors = factors_at_date[common_assets]
+                                    aligned_returns = cumulative_returns[common_assets]
 
-                                # Calculate Rank IC (correlation of ranks)
-                                rank_ic_val = aligned_factors.corr(
-                                    aligned_returns, method="spearman"
-                                )
+                                    rank_ic_val = aligned_factors.corr(
+                                        aligned_returns, method="spearman"
+                                    )
 
-                                if not pd.isna(rank_ic_val):
-                                    rank_ic_series.append(rank_ic_val)
-                                    dates.append(date)
+                                    if not pd.isna(rank_ic_val):
+                                        rank_ic_series.append(rank_ic_val)
+                                        dates.append(date)
 
                 if dates and rank_ic_series:
                     ax.plot(
